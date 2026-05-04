@@ -1,0 +1,31 @@
+[project]
+name = "research-companion"
+version = "0.1.0"
+description = "Single-user research agent with bi-temporal memory"
+requires-python = ">=3.11"
+dependencies = [
+  "graphiti-core[google-genai,kuzu]",
+  "langgraph>=0.6",
+  "langgraph-checkpoint-sqlite>=2.0",
+  "google-genai>=1.0",
+  "firecrawl-py",
+  "tavily-python",
+  "deepeval>=1.5",
+  "streamlit",
+  "pydantic>=2.7",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+  "smoke: live-API smoke test (cost-gated, opt-in via -m smoke)",
+  "eval: live Gemini judge eval (cost-gated)",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

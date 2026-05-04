@@ -1,0 +1,7 @@
+.env
+*.kuzu/
+*.kuzu
+checkpoints.sqlite
+__pycache__/
+.pytest_cache/
+.venv/
