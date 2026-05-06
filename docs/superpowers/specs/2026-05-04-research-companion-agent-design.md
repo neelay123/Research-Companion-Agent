@@ -1,0 +1,773 @@
+# Research Companion Agent — Design
+
+**Date:** 2026-05-04
+**Status:** Draft, awaiting user review
+**Predecessor:** "Building a Research Companion Agent with Episodic + Semantic Memory — Final Draft (Revision 2)" (pasted into chat)
+
+This doc is the post-pressure-test consolidation of Revision 2. It encodes locked decisions, fixes code bugs in the original §8, and tags every external claim that has not been verified against live docs/SDKs as `UNVERIFIED:` so the implementer can sanity-check before `pip install`.
+
+---
+
+## 1. Locked decisions
+
+| ID | Decision | Value |
+|----|----------|-------|
+| D | Frontend | Streamlit only, single page |
+| I | Secrets | `.env` + `python-dotenv` |
+| E | Reflection trigger | Manual: `python -m research_agent.reflect` |
+| B | Reflection structure | Separate top-level `StateGraph`, shared SQLite checkpointer file, distinct `thread_id` namespace (`reflect-<date>`) |
+| C | Eval fixture | Build-once: real Firecrawl + real Gemini + real Graphiti write into scratch Kuzu, clean shutdown, filesystem-copy `.kuzu` to `tests/fixtures/graph.kuzu` (committed). Tests open read-only |
+| — | Mocks | **None.** Eval suite uses live Gemini judge on every run. Eval fixture rebuild uses live Firecrawl + live Gemini |
+| — | Salience threshold | **Two-tier**: `0.5` cutoff. Below → drop. At/above → full extraction via `add_episode`. Env-overridable (`SALIENCE_CUTOFF`). Three-tier dropped because Graphiti has no documented "raw store, skip extraction" param; adding a side-table for raw text is v1 work |
+| — | Topics / research interests | `config.toml`, list of strings under `[research].topics`. Loaded once at process start |
+| — | Tavily relevance threshold | `0.5` default, `TAVILY_MIN_SCORE` env override |
+| — | Embedding dimension | **1536, locked.** Re-embedding the corpus is prohibitive. MTEB delta vs 3072 ≈ 0 per `gemini-embedding-001` card (UNVERIFIED) |
+| — | Concurrency cap | LangGraph `max_concurrency=4` is the single source of truth. Graphiti `SEMAPHORE_LIMIT` set high (`32`) so LangGraph dominates |
+| — | Deferred to v1 | LangSmith tracing, cost-cap kill switch, FalkorDB migration, Postgres checkpointer |
+
+## 2. Stack
+
+- **Memory engine:** `graphiti-core[google-genai,kuzu]` (UNVERIFIED: `graphiti-core` 0.28.x exists with both extras)
+- **Graph DB:** Kuzu embedded, single file. v1 graduates to FalkorDB (one-line driver swap)
+- **Orchestration:** LangGraph 0.6+ `StateGraph` with `AsyncSqliteSaver` checkpointer (UNVERIFIED: package `langgraph-checkpoint-sqlite`, import `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver`)
+- **LLM:** Gemini 2.5 Pro via `google-genai` (UNVERIFIED: pricing $1.25/$10 per M tokens ≤200K)
+- **Embedder:** `gemini-embedding-001` @ 1536 dims via Matryoshka (UNVERIFIED: SDK param name — likely `output_dimensionality` on Google SDK; Graphiti's `GeminiEmbedderConfig` field name unverified, may be `embedding_dim`)
+- **Reranker:** `GeminiRerankerClient` pinned to `gemini-2.5-flash` (UNVERIFIED: current GA flash-lite name — `flash-lite-preview-06-17` reportedly 404s)
+- **Web research:** Firecrawl primary, Tavily fallback. No mocks.
+- **Eval:** DeepEval with `GeminiModel` judge (UNVERIFIED: native non-LiteLLM `GeminiModel` in `deepeval.models`)
+- **Frontend:** Streamlit, one page
+
+## 3. Repository layout
+
+```
+research-companion/
+├── pyproject.toml
+├── .env.example
+├── config.toml                       # topics, thresholds
+├── docs/superpowers/specs/           # this file
+├── src/research_agent/
+│   ├── __init__.py
+│   ├── settings.py                   # dotenv + config.toml loader
+│   ├── graphiti_setup.py             # Graphiti client (singleton)
+│   ├── schemas.py                    # Pydantic: Plan, SalienceVerdict, Answer, entity types
+│   ├── state.py                      # ResearchState, ReflectState
+│   ├── web.py                        # firecrawl + tavily adapter
+│   ├── nodes.py                      # all LangGraph node functions
+│   ├── graph.py                      # builder.compile() factories for research + reflect
+│   ├── reflect.py                    # CLI entrypoint: python -m research_agent.reflect
+│   └── ui.py                         # Streamlit page: streamlit run -m research_agent.ui
+├── tests/
+│   ├── fixtures/
+│   │   └── graph.kuzu                # committed snapshot
+│   ├── build_fixture.py              # real services → scratch Kuzu → copy
+│   ├── test_eval.py                  # DeepEval pytest cases
+│   └── eval_dataset.py               # 6–10 LLMTestCase instances
+└── checkpoints.sqlite                # gitignored, runtime
+```
+
+## 4. Architecture (single page)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Streamlit UI (ui.py)                                        │
+│   asks question → app.astream(stream_mode="updates")        │
+│   renders each event as a progress line                     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                  ┌────────────▼────────────┐
+                  │  Research StateGraph     │
+                  │  thread_id = "session-N" │
+                  │                          │
+                  │  plan → search → fan-out │
+                  │  → ingest_one (×N) → ?   │
+                  │  → retrieve → answer     │
+                  └────────────┬─────────────┘
+                               │
+                ┌──────────────┼──────────────┐
+                ▼              ▼              ▼
+        Firecrawl       Gemini 2.5 Pro    Graphiti
+        Tavily          (LLM + judge)     (Kuzu file)
+                                                │
+                                                │ separate process,
+                                                │ shared checkpoint
+                                                │ file, different
+                                                │ thread_id
+                                                ▼
+                                      ┌──────────────────┐
+                                      │ Reflect StateGraph│
+                                      │ thread_id =       │
+                                      │ "reflect-<date>"  │
+                                      └──────────────────┘
+```
+
+Two top-level `StateGraph`s. Both share `checkpoints.sqlite` via the same `AsyncSqliteSaver` connection string. Different `thread_id` namespaces keep their checkpoint histories independent.
+
+## 5. State schemas
+
+```python
+# src/research_agent/state.py
+from typing import TypedDict, Annotated
+from operator import add
+
+class ResearchState(TypedDict):
+    question: str
+    plan: list[str]
+    candidate_urls: list[str]
+    documents: Annotated[list[dict], add]            # reducer for fan-in
+    salient_episode_ids: Annotated[list[str], add]
+    retrieval_chunks: list[str]                       # one per result, for DeepEval RETRIEVAL_CONTEXT
+    context: str                                      # joined version, for the answer prompt
+    answer: str
+    citations: list[str]
+    iteration: int
+
+class ReflectState(TypedDict):
+    since_iso: str
+    episode_uuids: list[str]                          # gathered, then re-fetched in synthesize
+    patterns: list[str]                               # synthesized text, written back as new episodes
+    new_synthesis_uuids: Annotated[list[str], add]
+```
+
+State holds **UUIDs and primitives only**. Never live Graphiti `EpisodicNode` / `EntityNode` objects — they don't survive `JsonPlusSerializer` and would balloon the SQLite checkpoints.
+
+## 6. Pydantic schemas
+
+```python
+# src/research_agent/schemas.py
+from pydantic import BaseModel, Field
+
+# --- structured-output for Gemini ---
+class Plan(BaseModel):
+    sub_questions: list[str] = Field(min_length=1, max_length=5)
+
+class SalienceVerdict(BaseModel):
+    score: float = Field(ge=0.0, le=1.0)
+    reason: str
+    novel_claims: list[str]
+
+class Answer(BaseModel):
+    answer: str
+    citations: list[str]
+
+# --- Graphiti entity types (Phase 2) ---
+class Paper(BaseModel):
+    title: str
+    arxiv_id: str | None = None
+    year: int | None = None
+
+class Author(BaseModel):
+    name: str
+    affiliation: str | None = None
+
+class Claim(BaseModel):
+    statement: str
+    # Note: dropped `confidence` field. Gemini structured output is unreliable on
+    # Optional/union-with-None primitives — either schema rejection or always-null. Graphiti's
+    # extractor surfaces confidence-equivalent signals via edge metadata anyway.
+```
+
+Keep schemas flat. UNVERIFIED: Gemini `response_schema` rejects deeply nested or heavily-constrained schemas with `InvalidArgument: 400`.
+
+## 7. Settings + Graphiti singleton
+
+```python
+# src/research_agent/settings.py
+import os, tomllib
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()  # .env in repo root
+
+GEMINI_API_KEY    = os.environ["GEMINI_API_KEY"]
+FIRECRAWL_API_KEY = os.environ["FIRECRAWL_API_KEY"]
+TAVILY_API_KEY    = os.environ.get("TAVILY_API_KEY")  # optional
+SALIENCE_CUTOFF   = float(os.environ.get("SALIENCE_CUTOFF", "0.5"))
+TAVILY_MIN_SCORE  = float(os.environ.get("TAVILY_MIN_SCORE", "0.5"))
+
+with open(Path(__file__).parent.parent.parent / "config.toml", "rb") as f:
+    _cfg = tomllib.load(f)
+TOPICS: list[str] = _cfg.get("research", {}).get("topics", [])
+```
+
+```python
+# src/research_agent/graphiti_setup.py
+import os
+from graphiti_core import Graphiti
+from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
+from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
+from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
+from graphiti_core.driver.kuzu_driver import KuzuDriver
+from .settings import GEMINI_API_KEY
+
+# UNVERIFIED: SEMAPHORE_LIMIT default is 10. Set high so LangGraph max_concurrency dominates.
+os.environ.setdefault("SEMAPHORE_LIMIT", "32")
+
+_instance: Graphiti | None = None
+
+def _build(db_path: str) -> Graphiti:
+    return Graphiti(
+        graph_driver=KuzuDriver(db=db_path),
+        llm_client=GeminiClient(config=LLMConfig(
+            api_key=GEMINI_API_KEY, model="gemini-2.5-pro",
+        )),
+        embedder=GeminiEmbedder(config=GeminiEmbedderConfig(
+            api_key=GEMINI_API_KEY,
+            embedding_model="gemini-embedding-001",
+            embedding_dim=1536,   # UNVERIFIED: field name. Try `output_dimensionality` if rejected.
+        )),
+        # Critical: explicit reranker. Default is OpenAIRerankerClient which demands OPENAI_API_KEY.
+        cross_encoder=GeminiRerankerClient(config=LLMConfig(
+            api_key=GEMINI_API_KEY,
+            model="gemini-2.5-flash",  # UNVERIFIED: current GA flash-lite name
+        )),
+    )
+
+def get_graphiti() -> Graphiti:
+    """Lazy singleton. Reads RESEARCH_KUZU_PATH at first call so tests can override."""
+    global _instance
+    if _instance is None:
+        path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
+        _instance = _build(path)
+    return _instance
+
+def reset_graphiti() -> None:
+    """Tests only: drop singleton so next get_graphiti() re-reads env."""
+    global _instance
+    _instance = None
+```
+
+## 8. Web adapter
+
+```python
+# src/research_agent/web.py
+import asyncio, logging
+from collections import defaultdict
+from urllib.parse import urlparse
+from firecrawl import FirecrawlApp
+from tavily import TavilyClient
+from .settings import FIRECRAWL_API_KEY, TAVILY_API_KEY, TAVILY_MIN_SCORE
+
+log = logging.getLogger(__name__)
+_firecrawl = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+_tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
+
+async def search_and_rank(queries: list[str], k: int = 8) -> list[str]:
+    """Tavily fans out cheap, returns URLs above threshold."""
+    if not _tavily:
+        raise RuntimeError("TAVILY_API_KEY required for search fan-out")
+    urls: dict[str, float] = {}
+    for q in queries:
+        resp = await asyncio.to_thread(_tavily.search, q, max_results=k)
+        for r in resp.get("results", []):
+            if r.get("score", 0) >= TAVILY_MIN_SCORE:
+                u = r["url"]
+                urls[u] = max(urls.get(u, 0), r["score"])
+    # rank, take top k
+    return [u for u, _ in sorted(urls.items(), key=lambda kv: -kv[1])[:k]]
+
+async def fetch_markdown(url: str, attempts: int = 3) -> str:
+    """Firecrawl with exponential backoff. Raises after final attempt — node lets LangGraph checkpoint+resume."""
+    for i in range(attempts):
+        try:
+            res = await asyncio.to_thread(
+                _firecrawl.scrape_url, url, params={"formats": ["markdown"]},
+            )
+            return res.get("markdown") or ""
+        except Exception as e:
+            log.warning("firecrawl %s attempt %d: %s", url, i + 1, e)
+            if i == attempts - 1:
+                raise
+            await asyncio.sleep(2 ** i)
+    return ""  # unreachable
+
+# Per-domain stagger so we don't hammer one host
+_domain_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+async def fetch_markdown_polite(url: str) -> str:
+    host = urlparse(url).netloc
+    async with _domain_locks[host]:
+        return await fetch_markdown(url)
+```
+
+UNVERIFIED: Firecrawl/Tavily Python SDK method names and kwargs (`scrape_url`, `params={"formats": [...]}`, etc.) — confirm against installed SDK.
+
+## 9. Nodes
+
+```python
+# src/research_agent/nodes.py
+import asyncio
+from google import genai
+from google.genai import types
+from google.api_core import exceptions as gx
+from .schemas import Plan, SalienceVerdict, Answer
+from .state import ResearchState
+from .graphiti_setup import get_graphiti
+from .web import search_and_rank, fetch_markdown_polite
+from .settings import GEMINI_API_KEY, SALIENCE_CUTOFF, TOPICS
+
+_g_client = genai.Client(api_key=GEMINI_API_KEY)
+
+# --- 429 + transient 5xx retry helper ---
+_RETRY_EXC = (
+    gx.ResourceExhausted,        # 429
+    gx.ServiceUnavailable,       # 503
+    gx.InternalServerError,      # 500 — Gemini occasionally hits this on long-context calls
+    gx.DeadlineExceeded,         # 504
+)
+
+async def _gen(model: str, contents, **cfg) -> object:
+    """generate_content with backoff on transient errors. Raises after 4 tries → LangGraph checkpoint."""
+    for i in range(4):
+        try:
+            return await _g_client.aio.models.generate_content(
+                model=model, contents=contents,
+                config=types.GenerateContentConfig(**cfg),
+            )
+        except _RETRY_EXC:
+            if i == 3: raise
+            await asyncio.sleep(2 ** i + 1)
+        # other errors propagate immediately
+
+def _parsed_or_raise(resp, schema_name: str):
+    """response.parsed is None on parse failure even with response_schema. Surface that explicitly."""
+    if resp.parsed is None:
+        raise ValueError(f"Gemini failed to produce valid {schema_name}; raw: {resp.text[:500]}")
+    return resp.parsed
+
+# ------------- nodes -------------
+async def plan_node(state: ResearchState) -> dict:
+    resp = await _gen(
+        "gemini-2.5-pro",
+        f"Decompose into 3-5 search-engine queries:\n{state['question']}",
+        response_mime_type="application/json",
+        response_schema=Plan,
+        thinking_config=types.ThinkingConfig(thinking_budget=512),
+    )
+    return {
+        "plan": _parsed_or_raise(resp, "Plan").sub_questions,
+        "iteration": state.get("iteration", 0) + 1,   # bumped each time plan_node runs
+    }
+
+async def search_node(state: ResearchState) -> dict:
+    return {"candidate_urls": await search_and_rank(state["plan"], k=8)}
+
+async def ingest_one(state: dict) -> dict:
+    """Per-URL: fetch → salience → (maybe) write to Graphiti. Reducer merges fan-in."""
+    url = state["url"]
+    md = await fetch_markdown_polite(url)
+
+    topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
+    verdict_resp = await _gen(
+        "gemini-2.5-pro",
+        f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
+        response_mime_type="application/json",
+        response_schema=SalienceVerdict,
+        thinking_config=types.ThinkingConfig(thinking_budget=256),
+        system_instruction=(
+            "Score relevance 0-1 to the research focus AND the long-term topics. "
+            "Extract novel atomic claims as short factual sentences."
+        ),
+    )
+    verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
+
+    if verdict.score < SALIENCE_CUTOFF:
+        return {"documents": [{"url": url, "skipped": True, "score": verdict.score}]}
+
+    # Two-tier: above cutoff → full extraction. (Three-tier dropped — see §1.)
+    ep = await get_graphiti().add_episode(
+        name=url, episode_body=md, source_description=f"web:{url}",
+        reference_time=None,   # UNVERIFIED: some versions reject None — pass datetime.utcnow() if so
+    )
+    return {
+        "documents": [{"url": url, "episode_uuid": ep.uuid, "score": verdict.score}],
+        "salient_episode_ids": [ep.uuid],
+    }
+
+async def retrieve_node(state: ResearchState) -> dict:
+    # UNVERIFIED: confirm graphiti.search uses configured cross_encoder by default.
+    # If not, look for a `rerank=True` flag or call an explicit rerank() method.
+    results = await get_graphiti().search(query=state["question"], num_results=20)
+    chunks = [f"[{r.uuid}] {r.fact}" for r in results]
+    return {"retrieval_chunks": chunks, "context": "\n\n".join(chunks)}
+
+async def answer_node(state: ResearchState) -> dict:
+    resp = await _gen(
+        "gemini-2.5-pro",
+        f"Question: {state['question']}\n\nContext (cite by [uuid]):\n{state['context']}",
+        response_mime_type="application/json",
+        response_schema=Answer,
+        thinking_config=types.ThinkingConfig(thinking_budget=4096),
+    )
+    a = _parsed_or_raise(resp, "Answer")
+    return {"answer": a.answer, "citations": a.citations}
+```
+
+## 10. Graph factories
+
+```python
+# src/research_agent/graph.py
+from contextlib import asynccontextmanager
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from .state import ResearchState, ReflectState
+from .nodes import plan_node, search_node, ingest_one, retrieve_node, answer_node
+
+CHECKPOINT_DSN = "checkpoints.sqlite"
+
+def fan_out_ingest(state: ResearchState) -> list[Send]:
+    return [Send("ingest_one", {"url": u, "question": state["question"]})
+            for u in state["candidate_urls"]]
+
+def should_search_more(state: ResearchState) -> str:
+    # Hard cap at 2 plan-cycles to prevent runaway recursion on adversarial topics.
+    # plan_node increments `iteration`; once we're past 2, give up and answer with what we have.
+    if state.get("iteration", 0) >= 2: return "retrieve"
+    if len(state.get("salient_episode_ids", [])) < 3: return "plan"
+    return "retrieve"
+
+def _build_research() -> StateGraph:
+    b = StateGraph(ResearchState)
+    b.add_node("plan", plan_node)
+    b.add_node("search", search_node)
+    b.add_node("ingest_one", ingest_one)
+    b.add_node("retrieve", retrieve_node)
+    b.add_node("answer", answer_node)
+    b.add_edge(START, "plan")
+    b.add_edge("plan", "search")
+    b.add_conditional_edges("search", fan_out_ingest, ["ingest_one"])
+    b.add_conditional_edges("ingest_one", should_search_more,
+                            {"plan": "plan", "retrieve": "retrieve"})
+    b.add_edge("retrieve", "answer")
+    b.add_edge("answer", END)
+    return b
+
+@asynccontextmanager
+async def research_app():
+    """Lifecycle-managed app. Use:  async with research_app() as app: ..."""
+    async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DSN) as ckpt:
+        yield _build_research().compile(checkpointer=ckpt)
+```
+
+Lifecycle fix from Revision 2: `__aenter__` is paired with `__aexit__` via `async with`, no leaks. Streamlit/CLI/reflect all enter the same context manager.
+
+## 11. Reflection (separate top-level)
+
+```python
+# src/research_agent/reflect.py
+"""Manual reflection pass. Run:  python -m research_agent.reflect [--since 2026-04-01]"""
+import argparse, asyncio
+from contextlib import asynccontextmanager
+from datetime import date
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from google.genai import types
+from .state import ReflectState
+from .graphiti_setup import get_graphiti
+from .nodes import _gen, _parsed_or_raise
+from .graph import CHECKPOINT_DSN
+from pydantic import BaseModel
+
+class Synthesis(BaseModel):
+    patterns: list[str]
+
+async def gather_recent(s: ReflectState) -> dict:
+    # UNVERIFIED: Graphiti API for "episodes since timestamp". Likely graphiti.get_episodes(since=...)
+    eps = await get_graphiti().get_episodes(after=s["since_iso"])
+    return {"episode_uuids": [e.uuid for e in eps]}  # state holds UUIDs only — bodies re-fetched
+
+async def synthesize(s: ReflectState) -> dict:
+    g = get_graphiti()
+    # UNVERIFIED: per-UUID fetch API name (likely graphiti.get_episode_by_uuid or similar)
+    eps = [await g.get_episode_by_uuid(u) for u in s["episode_uuids"]]
+    body = "\n---\n".join(e.content for e in eps)
+    resp = await _gen(
+        "gemini-2.5-pro",
+        f"Find non-obvious patterns connecting these episodes:\n{body[:80000]}",
+        response_mime_type="application/json",
+        response_schema=Synthesis,
+        thinking_config=types.ThinkingConfig(thinking_budget=8192),
+    )
+    return {"patterns": _parsed_or_raise(resp, "Synthesis").patterns}
+
+async def write_back(s: ReflectState) -> dict:
+    uuids = []
+    for p in s["patterns"]:
+        ep = await get_graphiti().add_episode(
+            name=f"reflection:{date.today().isoformat()}",
+            episode_body=p, source_description="reflection",
+            reference_time=None,
+        )
+        uuids.append(ep.uuid)
+    return {"new_synthesis_uuids": uuids}
+
+def _build_reflect() -> StateGraph:
+    b = StateGraph(ReflectState)
+    b.add_node("gather", gather_recent)
+    b.add_node("think", synthesize)
+    b.add_node("write", write_back)
+    b.add_edge(START, "gather")
+    b.add_edge("gather", "think")
+    b.add_edge("think", "write")
+    b.add_edge("write", END)
+    return b
+
+@asynccontextmanager
+async def reflect_app():
+    async with AsyncSqliteSaver.from_conn_string(CHECKPOINT_DSN) as ckpt:
+        yield _build_reflect().compile(checkpointer=ckpt)
+
+async def _main(since: str) -> None:
+    async with reflect_app() as app:
+        cfg = {"configurable": {"thread_id": f"reflect-{date.today().isoformat()}"}}
+        async for ev in app.astream({"since_iso": since}, cfg, stream_mode="updates"):
+            print(ev)
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--since", default="1970-01-01")
+    args = p.parse_args()
+    asyncio.run(_main(args.since))
+```
+
+State holds UUIDs only (`episode_uuids`) and synthesized text (`patterns`); episode bodies are re-fetched per-UUID inside `synthesize` to keep checkpoint size bounded. Same rule as §5: never put live Graphiti node objects or large fetched payloads into LangGraph state.
+
+## 12. Streamlit UI
+
+```python
+# src/research_agent/ui.py
+"""streamlit run -m research_agent.ui"""
+import asyncio
+import streamlit as st
+from .graph import research_app
+
+st.set_page_config(page_title="Research Companion", layout="wide")
+st.title("Research Companion")
+
+q = st.text_input("Question:")
+go = st.button("Ask")
+
+async def run(question: str):
+    progress = st.empty()
+    answer_box = st.empty()
+    citations_box = st.empty()
+    events: list[str] = []
+    async with research_app() as app:
+        cfg = {
+            "configurable": {"thread_id": f"session-{hash(question)}",
+                             "max_concurrency": 4},
+            "recursion_limit": 50,   # plan loop bumps iteration, hard-capped at 2; 50 leaves headroom for fan-out
+        }
+        async for ev in app.astream({"question": question}, cfg, stream_mode="updates"):
+            events.append(str(ev)[:300])
+            progress.code("\n".join(events[-20:]))
+        # Pull final values from the checkpoint
+        state = await app.aget_state(cfg)
+        answer_box.markdown(state.values.get("answer", "(no answer)"))
+        citations_box.write(state.values.get("citations", []))
+
+if go and q:
+    asyncio.run(run(q))
+```
+
+UNVERIFIED: `app.aget_state(cfg)` is the LangGraph 0.6+ way to read the final checkpointed state.
+
+## 13. Eval harness — no mocks
+
+```python
+# tests/build_fixture.py
+"""Run once. Builds tests/fixtures/graph.kuzu from real Firecrawl + Gemini.
+   IMPORTANT: do not run during normal pytest — costs real money."""
+# CRITICAL ordering: set RESEARCH_KUZU_PATH BEFORE any research_agent import
+# so the lazy graphiti singleton picks it up on first call.
+import os, asyncio, shutil, sys
+from pathlib import Path
+
+PINNED_QUESTIONS = [
+    "What are state-space models like Mamba?",
+    "Who are the authors of the original Mamba paper?",
+    # ... 4-6 more pinned questions whose source URLs are stable (arxiv abs, archive.org)
+]
+SCRATCH = Path("tests/fixtures/_scratch.kuzu")
+TARGET  = Path("tests/fixtures/graph.kuzu")
+
+# Set env BEFORE imports so the singleton, when first built inside research_agent.nodes
+# import chain, reads the scratch path — not the production default.
+os.environ["RESEARCH_KUZU_PATH"] = str(SCRATCH)
+
+from research_agent.graph import research_app          # noqa: E402
+from research_agent.graphiti_setup import reset_graphiti  # noqa: E402
+
+async def main():
+    if SCRATCH.exists(): shutil.rmtree(SCRATCH, ignore_errors=True)
+    reset_graphiti()  # in case anything imported earlier already cached the default
+    async with research_app() as app:
+        for q in PINNED_QUESTIONS:
+            cfg = {"configurable": {"thread_id": f"fixture-{hash(q)}"},
+                   "recursion_limit": 50}
+            async for _ in app.astream({"question": q}, cfg, stream_mode="updates"):
+                pass
+    # Clean shutdown happens in the async with __aexit__
+    # Now copy. Kuzu single-process write lock is released; read-only attach is safe.
+    if TARGET.exists(): shutil.rmtree(TARGET, ignore_errors=True)
+    shutil.copytree(SCRATCH, TARGET) if SCRATCH.is_dir() else shutil.copy(SCRATCH, TARGET)
+    print(f"fixture written: {TARGET}")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+UNVERIFIED: Kuzu DB is a directory or a single file depending on version — handle both via `is_dir()`. Confirm against installed Kuzu.
+
+```python
+# tests/eval_dataset.py
+from deepeval.test_case import LLMTestCase
+
+DATASET: list[LLMTestCase] = [
+    LLMTestCase(
+        input="When was the Mamba paper first posted to arXiv?",
+        actual_output="",        # filled by test runner
+        retrieval_context=[],    # filled by test runner
+        expected_output="December 2023",
+    ),
+    # ... 5–9 more covering: multi-hop, temporal, contradiction, citation-correctness
+]
+```
+
+```python
+# tests/test_eval.py
+import os, pytest, asyncio
+from deepeval import assert_test
+from deepeval.metrics import GEval
+from deepeval.models import GeminiModel
+from deepeval.test_case import LLMTestCaseParams
+from research_agent.graph import research_app
+from .eval_dataset import DATASET
+
+# Live Gemini judge — no mocks. Runs cost real Gemini tokens per test.
+JUDGE = GeminiModel(model="gemini-2.5-pro", api_key=os.environ["GEMINI_API_KEY"])
+
+CITATION_CORRECTNESS = GEval(
+    name="CitationCorrectness", model=JUDGE, threshold=0.8,
+    criteria=("Every factual claim in `actual_output` must be supported by at least one "
+              "episode UUID present in `retrieval_context`. Fail if any claim lacks a citation."),
+    evaluation_params=[LLMTestCaseParams.ACTUAL_OUTPUT, LLMTestCaseParams.RETRIEVAL_CONTEXT],
+)
+
+TEMPORAL_CORRECTNESS = GEval(
+    name="TemporalCorrectness", model=JUDGE, threshold=0.7,
+    criteria=("If the question asks about a point in time, the answer must reflect what was "
+              "true at that time per the retrieval context, not the latest known fact."),
+    evaluation_params=[LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT,
+                       LLMTestCaseParams.RETRIEVAL_CONTEXT],
+)
+
+@pytest.fixture(scope="session")
+def fixture_db(tmp_path_factory):
+    """Open the committed Kuzu fixture read-only."""
+    import shutil
+    from research_agent.graphiti_setup import reset_graphiti
+    src = "tests/fixtures/graph.kuzu"
+    dst = tmp_path_factory.mktemp("kuzu") / "graph.kuzu"
+    shutil.copytree(src, dst) if os.path.isdir(src) else shutil.copy(src, dst)
+    os.environ["RESEARCH_KUZU_PATH"] = str(dst)
+    # If any prior import bound the singleton against the default path, drop it.
+    reset_graphiti()
+    yield dst
+
+@pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+def test_eval(fixture_db, tc):
+    async def run():
+        async with research_app() as app:
+            cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                   "recursion_limit": 50}
+            async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                pass
+            state = await app.aget_state(cfg)
+            tc.actual_output = state.values["answer"]
+            tc.retrieval_context = state.values["retrieval_chunks"]
+    asyncio.run(run())
+    assert_test(tc, [CITATION_CORRECTNESS, TEMPORAL_CORRECTNESS])
+```
+
+`graphiti_setup.get_graphiti()` reads `RESEARCH_KUZU_PATH` lazily on first call, so the fixture path set in the pytest fixture is honored. Tests copy the committed fixture into a tempdir per session so the original is never mutated.
+
+## 14. UNVERIFIED claims (reading list before `pip install`)
+
+Group A — versions / packages:
+- `graphiti-core` 0.28.x exists with `[google-genai,kuzu]` extras
+- `langgraph-checkpoint-sqlite` package, `AsyncSqliteSaver` import path
+- DeepEval `GeminiModel` native (no LiteLLM)
+
+Group B — Graphiti API surface:
+- `KuzuDriver(db=...)` constructor signature
+- `GeminiClient`, `GeminiEmbedder`, `GeminiRerankerClient` import paths and config field names (`embedding_dim` vs `output_dimensionality`)
+- Default `cross_encoder` falls back to `OpenAIRerankerClient` when omitted
+- `add_episode` signature and `reference_time=None` acceptance
+- `search` uses configured reranker by default, or needs explicit flag
+- `get_episodes(after=...)` exists for the reflection pass
+- Param to skip triple extraction for raw-store-only episodes
+
+Group C — Gemini SDK:
+- `google-genai` (unified) is current; `client.aio.models.generate_content` async
+- Pricing $1.25/$10 per M tokens at ≤200K context
+- Pro rejects `thinking_budget=0`; Flash/Flash-Lite accept
+- `gemini-embedding-001` Matryoshka dims, max input 2048 tokens
+- Current GA flash-lite name (`flash-lite-preview-06-17` reportedly 404s)
+
+Group D — web SDKs:
+- Firecrawl Python SDK method `scrape_url(url, params={"formats": [...]})`
+- Tavily Python SDK `client.search(q, max_results=)` returns `{"results": [{"url", "score"}]}`
+
+Group E — infra:
+- LangGraph issue #5790 (`langgraph dev` ignores user checkpointer) — only relevant if using `langgraph dev`
+- Kuzu fixture is directory vs single file
+- FalkorDB built-in HNSW (only relevant at v1 graduation)
+
+Group F — undocumented behavior to confirm empirically:
+- `add_episode` idempotency on duplicate URLs — re-ingesting the same arxiv abs across sessions: does Graphiti dedupe by `name`/`source_description`, or do duplicate episodic nodes accumulate?
+- Whether `graphiti.search()` invokes the configured `cross_encoder` automatically, or requires an explicit `rerank=True` / separate `rerank()` call
+- Per-domain `_domain_locks` in `web.py` are module-global — fine for the single-process Streamlit app, silently ineffective if a worker process is added later
+
+Each tag in the code is exactly `UNVERIFIED:` so a single grep surfaces them all.
+
+## 15. Phase order (unchanged from Revision 2)
+
+1. Eval harness skeleton + 6 test cases (failing).
+2. Graphiti + Gemini wiring; entity types; first end-to-end ingest.
+3. Salience gate; conditional looping `should_search_more`.
+4. Reflection top-level graph; manual `python -m research_agent.reflect`.
+5. Contradictions surfacing in `answer_node` (Phase 4 work — defer until 1–4 stable).
+
+## 16. Bugs — fix log
+
+Revision 2 (R2) bugs in rows 1–10. Round-2 review of *this* spec adds rows 11–18.
+
+
+
+| # | Issue | Fix in this spec |
+|---|-------|------------------|
+| 1 | `AsyncSqliteSaver` opened with bare `__aenter__`, never exited (leak) | `@asynccontextmanager` factories, `async with research_app() as app:` everywhere |
+| 2 | `response.parsed` could be `None`, no fallback | `_parsed_or_raise` helper |
+| 3 | No 429 retry; per-URL fan-out blasts free tier | `_gen` wrapper with exponential backoff |
+| 4 | LangGraph + Graphiti concurrency stacked | `max_concurrency=4` in LangGraph, `SEMAPHORE_LIMIT=32` in Graphiti — single bound |
+| 5 | `{topics}` referenced but never stored | `config.toml` → `settings.TOPICS`, injected into salience prompt |
+| 6 | Reranker configured but retrieval path didn't confirm use | Tagged UNVERIFIED with explicit fallback note in `retrieve_node` |
+| 7 | Reflection labeled "subgraph" but compiled separately | Spec calls it what it is: separate top-level graph |
+| 8 | Eval fixture "copy Kuzu file" while DB live | Build-once: clean shutdown via `async with` exit, then `shutil.copy*` |
+| 9 | Streamlit/CLI dual mention | Streamlit only; CLI exists only for `reflect` |
+| 10 | Line budget mismatch (300 vs 340) | Recounted: state ~30 + nodes ~150 + graph factories ~50 + web ~40 + reflect ~50 + UI ~30 + eval ~80 + schemas ~30 = **~460 lines.** R2's 300 was measuring "domain code only" (nodes + Graphiti wiring + adapter + DeepEval + helpers). 460 here measures the full project including Streamlit UI, reflection top-level graph, fixture builder, retry/lifecycle plumbing — none of which were wrong omissions in R2; the scope just expanded. Both numbers are honest for what they measure |
+| 11 | Reflection state would leak `_episodes`/`_patterns` into checkpoint (transient keys still serialized) | `ReflectState` now holds `episode_uuids` + `patterns` as proper fields; `synthesize` re-fetches bodies per-UUID |
+| 12 | Three-tier salience depended on an UNVERIFIED Graphiti param to skip extraction | Collapsed to two-tier (`SALIENCE_CUTOFF` 0.5). Side-table for raw text deferred to v1 |
+| 13 | `RESEARCH_KUZU_PATH` could be set after `research_agent` import → singleton bound to wrong path | Fixture builder sets env var before any `research_agent` import; pytest fixture calls `reset_graphiti()` after setting env |
+| 14 | `_gen` retried only 429s, not transient 5xx | Retry set extended to `ResourceExhausted`, `ServiceUnavailable`, `InternalServerError`, `DeadlineExceeded` |
+| 15 | DeepEval `retrieval_context` got the joined string instead of separate chunks | New `retrieval_chunks: list[str]` field on `ResearchState`; `retrieve_node` populates both `chunks` and joined `context`; eval reads `chunks` |
+| 16 | `Claim.confidence: float \| None` would trip Gemini structured output | Field dropped; comment explains why |
+| 17 | `iteration` field set to `0` in `plan_node`, never incremented → early-exit dead code | `plan_node` increments via `state.get("iteration", 0) + 1`; `recursion_limit=50` set explicitly in run config |
+| 18 | Per-domain Firecrawl locks would silently fail across worker processes | Acceptable in single-process design; logged in §14 Group F so future-you doesn't get bitten |
+
+## 17. Open questions for user
+
+None blocking. Implementer should:
+- Resolve all UNVERIFIED tags before `pip install` (web access required)
+- Decide eval dataset content (6–10 specific Q+expected_output pairs) — drafted skeletons only
+- Pick stable URLs for fixture build (arxiv abs / archive.org)
