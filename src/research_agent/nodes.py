@@ -46,7 +46,7 @@ def _parsed_or_raise(resp, schema_name: str):
 
 async def plan_node(state: ResearchState) -> dict:
     resp = await _gen(
-        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         f"Decompose into 3-5 search-engine queries:\n{state['question']}",
         response_mime_type="application/json",
         response_schema=Plan,
@@ -74,7 +74,7 @@ async def ingest_one(state: dict) -> dict:
             return {"documents": [{"url": url, "skipped": True, "error": "empty markdown"}]}
         topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
         verdict_resp = await _gen(
-            "gemini-2.5-pro",
+            "gemini-2.5-flash",
             f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
             response_mime_type="application/json",
             response_schema=SalienceVerdict,
@@ -112,7 +112,7 @@ async def retrieve_node(state: ResearchState) -> dict:
 
 async def answer_node(state: ResearchState) -> dict:
     resp = await _gen(
-        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         f"Question: {state['question']}\n\nContext (cite by [uuid]):\n{state['context']}",
         response_mime_type="application/json",
         response_schema=Answer,

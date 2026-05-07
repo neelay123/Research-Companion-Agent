@@ -10,7 +10,7 @@ from .eval_dataset import DATASET
 pytestmark = pytest.mark.eval
 
 # Verified: GeminiModel(model=..., api_key=..., ...) — kwargs match deepeval 1.x signature.
-JUDGE = GeminiModel(model="gemini-2.5-pro", api_key=os.environ["GEMINI_API_KEY"])
+JUDGE = GeminiModel(model="gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
 # Verified: GEval(name, evaluation_params, criteria, model, threshold, ...).
 CITATION_CORRECTNESS = GEval(
