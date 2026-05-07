@@ -34,6 +34,7 @@ async def _gen(model: str, contents, **cfg) -> object:
         except asyncio.TimeoutError:
             if i == 3: raise
             await asyncio.sleep(2 ** i + 1)
+    raise RuntimeError("unreachable: _gen exhausted retries without raising")
 
 def _parsed_or_raise(resp, schema_name: str):
     """response.parsed is None on parse failure even with response_schema."""
@@ -77,7 +78,8 @@ async def ingest_one(state: dict) -> dict:
     )
     verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
     if verdict.score < SALIENCE_CUTOFF:
-        return {"documents": [{"url": url, "skipped": True, "score": verdict.score}]}
+        return {"documents": [{"url": url, "skipped": True,
+                                "score": verdict.score, "reason": verdict.reason}]}
     g = await get_graphiti()
     ep_result = await g.add_episode(
         name=url,
