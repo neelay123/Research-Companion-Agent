@@ -24,32 +24,24 @@ def scratch_db(tmp_path, monkeypatch):
 
 
 def test_graphiti_round_trip(scratch_db):
-    """One add_episode + one search. Costs ~1 cent in Gemini calls."""
-
+    """One add_episode + one search via get_graphiti(). Costs ~1¢ in Gemini calls."""
+    from datetime import datetime, timezone
     async def go():
-        g = get_graphiti()
-        # NOTE (graphiti-core 0.29.0 quirk): Graphiti.build_indices_and_constraints
-        # delegates to KuzuDriver.build_indices_and_constraints, which is a no-op.
-        # The actual FTS index creation lives on driver.graph_ops, so call it
-        # explicitly. Without this, search() raises:
-        #   "Table RelatesToNode_ doesn't have an index with name edge_name_and_fact"
-        await g.driver.graph_ops.build_indices_and_constraints(g.driver)
-        # Episode body intentionally relational (two named entities + a verb)
-        # because Graphiti.search() returns EntityEdges only — a single-entity
-        # sentence yields zero edges and an empty result set.
+        g = await get_graphiti()
+        # build_indices_and_constraints is now handled inside get_graphiti() on first call.
         result = await g.add_episode(
             name="smoke",
             episode_body=(
-                "Mamba is a state-space model architecture developed by "
-                "Albert Gu and Tri Dao at Carnegie Mellon University in 2023."
+                "Mamba is a state-space model introduced in 2023 by Albert Gu and "
+                "Tri Dao at Carnegie Mellon."
             ),
             source_description="smoke-test",
             reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
-        # add_episode returns AddEpisodeResults; the EpisodicNode is on .episode
+        # add_episode returns AddEpisodeResults; episode UUID is at .episode.uuid
         assert result.episode.uuid
-        assert len(result.edges) >= 1, "Gemini extracted no edges from the episode"
-        results = await g.search(query="Mamba", num_results=5)
+        # Single-entity sentences yield zero EntityEdges; assert relational edges exist
+        assert len(result.edges) >= 1, "Gemini extracted zero edges (try a more relational sentence)"
+        results = await g.search(query="state space models", num_results=5)
         assert len(results) >= 1
-
     asyncio.run(go())
