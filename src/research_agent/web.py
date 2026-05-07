@@ -57,6 +57,6 @@ _domain_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 async def fetch_markdown_polite(url: str) -> str:
-    host = urlparse(url).netloc
+    host = urlparse(url).netloc.lower()  # case-fold so Arxiv.org and arxiv.org share one lock
     async with _domain_locks[host]:
         return await fetch_markdown(url)
