@@ -1,0 +1,1022 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.2, pytest-9.0.3, pluggy-1.6.0 -- D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Downloads\QMUL\jobs\Research Companion Agent
+configfile: pyproject.toml
+plugins: anyio-4.13.0, deepeval-3.9.9, langsmith-0.8.0, asyncio-1.3.0, repeat-0.9.4, rerunfailures-16.1, xdist-3.8.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 6 items
+
+tests/test_eval.py::test_eval[When was the Mamba paper first posted to] FAILED [ 16%]
+tests/test_eval.py::test_eval[Who are the authors of the original Mamb] FAILED [ 33%]
+tests/test_eval.py::test_eval[How does Mamba's selective state space d] FAILED [ 50%]
+tests/test_eval.py::test_eval[Compare Mamba and RWKV on long-context e] FAILED [ 66%]
+tests/test_eval.py::test_eval[What is the time complexity of attention] FAILED [ 83%]
+tests/test_eval.py::test_eval[What is the latest GDP figure for Tunisi] FAILED [100%]Running teardown with pytest sessionfinish...
+
+
+================================== FAILURES ===================================
+_____________ test_eval[When was the Mamba paper first posted to] _____________
+
+self = <deepeval.metrics.g_eval.g_eval.GEval object at 0x000002729D9339D0>
+test_case = LLMTestCase(input='When was the Mamba paper first posted to arXiv?', actual_output='I apologize, but the provided cont...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+multimodal = False, _additional_context = None
+
+    async def _a_evaluate(
+        self,
+        test_case: LLMTestCase,
+        multimodal: bool,
+        _additional_context: Optional[str] = None,
+    ) -> Tuple[Union[int, float], str]:
+        test_case_content = construct_test_case_string(
+            self.evaluation_params, test_case
+        )
+        g_eval_params_str = construct_g_eval_params_string(
+            self.evaluation_params
+        )
+        if not self.strict_mode:
+            rubric_str = format_rubrics(self.rubric) if self.rubric else None
+            prompt = self.evaluation_template.generate_evaluation_results(
+                evaluation_steps=number_evaluation_steps(self.evaluation_steps),
+                test_case_content=test_case_content,
+                parameters=g_eval_params_str,
+                rubric=rubric_str,
+                score_range=self.score_range,
+                _additional_context=_additional_context,
+                multimodal=multimodal,
+            )
+        else:
+            prompt = (
+                self.evaluation_template.generate_strict_evaluation_results(
+                    evaluation_steps=number_evaluation_steps(
+                        self.evaluation_steps
+                    ),
+                    test_case_content=test_case_content,
+                    parameters=g_eval_params_str,
+                    _additional_context=_additional_context,
+                    multimodal=multimodal,
+                )
+            )
+        try:
+            # don't use log probabilities for unsupported gpt models
+            if no_log_prob_support(self.model):
+                raise AttributeError("log_probs unsupported.")
+    
+            # Don't have to check for using native model
+            # since generate raw response only exist for deepeval's native model
+>           res, cost = await self.model.a_generate_raw_response(
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                prompt, top_logprobs=self.top_logprobs
+            )
+E           AttributeError: 'GeminiModel' object has no attribute 'a_generate_raw_response'
+
+.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py:295: AttributeError
+
+During handling of the above exception, another exception occurred:
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input='When was the Mamba paper first posted to arXiv?', actual_output='I apologize, but the provided cont...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+        asyncio.run(run())
+>       assert_test(tc, [CITATION_CORRECTNESS, TEMPORAL_CORRECTNESS])
+
+tests\test_eval.py:53: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\deepeval\evaluate\evaluate.py:108: in assert_test
+    test_result = loop.run_until_complete(
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\deepeval\evaluate\execute\e2e.py:449: in a_execute_test_cases
+    await asyncio.wait_for(
+C:\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+.venv\Lib\site-packages\deepeval\evaluate\execute\e2e.py:352: in execute_with_semaphore
+    return await _await_with_outer_deadline(
+.venv\Lib\site-packages\deepeval\evaluate\execute\_common.py:238: in _await_with_outer_deadline
+    return await asyncio.wait_for(coro, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+.venv\Lib\site-packages\deepeval\evaluate\execute\e2e.py:578: in _a_execute_llm_test_cases
+    await measure_metrics_with_indicator(
+.venv\Lib\site-packages\deepeval\metrics\indicator.py:238: in measure_metrics_with_indicator
+    await asyncio.gather(*tasks)
+.venv\Lib\site-packages\deepeval\metrics\indicator.py:251: in safe_a_measure
+    await metric.a_measure(
+.venv\Lib\site-packages\deepeval\tracing\tracing.py:1346: in async_wrapper
+    return await func(*args, **func_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py:188: in a_measure
+    g_score, reason = await self._a_evaluate(
+.venv\Lib\site-packages\deepeval\tracing\tracing.py:1346: in async_wrapper
+    return await func(*args, **func_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py:317: in _a_evaluate
+    return await a_generate_with_schema_and_extract(
+.venv\Lib\site-packages\deepeval\metrics\utils.py:482: in a_generate_with_schema_and_extract
+    result, cost = await metric.model.a_generate_with_schema(
+.venv\Lib\site-packages\deepeval\models\base_model.py:136: in a_generate_with_schema
+    return await self.a_generate(*args, schema=schema, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\deepeval\tracing\tracing.py:1346: in async_wrapper
+    return await func(*args, **func_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:193: in async_wrapped
+    return await copy(fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:393: in <lambda>
+    self._add_action_func(lambda rs: rs.outcome.result())
+                                     ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\deepeval\models\retry_policy.py:658: in attempt
+    return await asyncio.wait_for(coro, per_attempt_timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\tasks.py:507: in wait_for
+    return await fut
+           ^^^^^^^^^
+.venv\Lib\site-packages\deepeval\models\llms\gemini_model.py:289: in a_generate
+    response = await client.aio.models.generate_content(
+.venv\Lib\site-packages\google\genai\models.py:8418: in generate_content
+    response = await self._generate_content(
+.venv\Lib\site-packages\google\genai\models.py:6951: in _generate_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 503
+response_json = {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent) [503 Service...g': 'gfet4t7; dur=1605', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+        raise ClientError(status_code, response_json, response)
+      elif 500 <= status_code < 600:
+>       raise ServerError(status_code, response_json, response)
+E       google.genai.errors.ServerError: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+
+.venv\Lib\site-packages\google\genai\errors.py:271: ServerError
+---------------------------- Captured stdout call -----------------------------
+    \U0001f3af Evaluating test case #0                                       0% 0:00:10
+------------------------------ Captured log call ------------------------------
+ERROR    graphiti_core.driver.kuzu_driver:kuzu_driver.py:223 Error executing Kuzu query: Binder exception: Index episode_content already exists in table Episodic.\nCALL CREATE_FTS_INDEX('Episodic', 'episode_content', ['content', 'source', 'source_description']);\n{}\nERROR    graphiti_core.driver.kuzu_driver:kuzu_driver.py:223 Error executing Kuzu query: Binder exception: Index node_name_and_summary already exists in table Entity.\nCALL CREATE_FTS_INDEX('Entity', 'node_name_and_summary', ['name', 'summary']);\n{}\nERROR    graphiti_core.driver.kuzu_driver:kuzu_driver.py:223 Error executing Kuzu query: Binder exception: Index community_name already exists in table Community.\nCALL CREATE_FTS_INDEX('Community', 'community_name', ['name']);\n{}\nERROR    graphiti_core.driver.kuzu_driver:kuzu_driver.py:223 Error executing Kuzu query: Binder exception: Index edge_name_and_fact already exists in table RelatesToNode_.\nCALL CREATE_FTS_INDEX('RelatesToNode_', 'edge_name_and_fact', ['name', 'fact']);\n{}\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:574 LLM did not return resolutions for IDs: [29]\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:574 LLM did not return resolutions for IDs: [29]\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nINFO     deepeval.evaluate.execute.e2e:e2e.py:550 in _a_execute_llm_test_cases
+_____________ test_eval[Who are the authors of the original Mamb] _____________
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input='Who are the authors of the original Mamba paper?', actual_output='', expected_output='Albert Gu and...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+>       asyncio.run(run())
+
+tests\test_eval.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python313\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_eval.py:47: in run
+    async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+.venv\Lib\site-packages\langgraph\pregel\main.py:3181: in astream
+    async for _ in runner.atick(
+.venv\Lib\site-packages\langgraph\pregel\_runner.py:304: in atick
+    await arun_with_retry(
+.venv\Lib\site-packages\langgraph\pregel\_retry.py:242: in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:705: in ainvoke
+    input = await asyncio.create_task(
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:473: in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\research_agent\nodes.py:109: in retrieve_node
+    results = await g.search(query=state["question"], num_results=20)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\graphiti_core\decorators.py:96: in wrapper
+    return await func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\graphiti_core\graphiti.py:1522: in search
+    await search(
+.venv\Lib\site-packages\graphiti_core\search\search.py:148: in search
+    else await embedder.create(input_data=[query.replace('\n', ' ')])
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\graphiti_core\embedder\gemini.py:102: in create
+    result = await self.client.aio.models.embed_content(
+.venv\Lib\site-packages\google\genai\models.py:9059: in embed_content
+    return await self._embed_content(
+.venv\Lib\site-packages\google\genai\models.py:7185: in _embed_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 429
+response_json = {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at http...ap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents) [429 ...ing': 'gfet4t7; dur=25', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+>       raise ClientError(status_code, response_json, response)
+E       google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+E       During task with name 'retrieve' and id 'becf5062-5b02-f68a-a481-7efd32a86636'
+
+.venv\Lib\site-packages\google\genai\errors.py:269: ClientError
+------------------------------ Captured log call ------------------------------
+WARNING  research_agent.web:web.py:47 firecrawl https://www.reddit.com/r/MachineLearning/comments/18ckntr/p_mambachat_a_chat_llm_based_on_state_space_models/ attempt 1: Website Not Supported: Failed to scrape. We apologize for the inconvenience but we do not support this site. If you are part of an enterprise and want to have a further conversation about this, please fill out our intake form here: https://fk4bvu0n5qp.typeform.com/to/Ej6oydlg - No additional error details provided.\nWARNING  research_agent.web:web.py:47 firecrawl https://www.reddit.com/r/MachineLearning/comments/18ckntr/p_mambachat_a_chat_llm_based_on_state_space_models/ attempt 2: Website Not Supported: Failed to scrape. We apologize for the inconvenience but we do not support this site. If you are part of an enterprise and want to have a further conversation about this, please fill out our intake form here: https://fk4bvu0n5qp.typeform.com/to/Ej6oydlg - No additional error details provided.\nWARNING  research_agent.web:web.py:47 firecrawl https://www.reddit.com/r/MachineLearning/comments/18ckntr/p_mambachat_a_chat_llm_based_on_state_space_models/ attempt 3: Website Not Supported: Failed to scrape. We apologize for the inconvenience but we do not support this site. If you are part of an enterprise and want to have a further conversation about this, please fill out our intake form here: https://fk4bvu0n5qp.typeform.com/to/Ej6oydlg - No additional error details provided.\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:727 LLM returned invalid duplicate_facts idx values [0] (valid range: 0--1 for EXISTING FACTS)\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: HAS_VERSION\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: HAS_VERSION\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {\n  "edges": [\n    {\n      "source_entity_name": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",\n      "target_entity_name": "COLM 2024 Conference",\n      "relation_type": "PUBLISHED_AT",\n      "fact": "The paper \\"Mamba: Linear-Time Sequence Modeling with Selective State Spaces\\" was published at the COLM 2024 Conference.",\n      "valid_at": "2024-07-10T00:00:00Z",\n      "invalid_at": null,\n      "episode_indices": [\n        0\n      ]\n    },\n    {\n      "source_entity_name":...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 51 column 15 (char 1960)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 96 for extracted node 8f5455d4-53d3-49a3-8f2f-f08694530995; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 84 for extracted node 43ec2eaf-88d2-4d49-83cf-22913ff13d53; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 86 for extracted node 7030a217-e6a2-4d1c-ac2f-abab47a86335; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 87 for extracted node c8873e03-76e5-4b5a-8566-978af8b6e0e0; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 88 for extracted node 86b4f7ae-e922-4f2e-98e0-6756c3a73f3b; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 89 for extracted node 76365cf2-f6c7-4787-86fe-7c77521e54de; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 91 for extracted node 25995794-38d0-475d-a1fb-1992d4719a7b; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 92 for extracted node 283334d0-8fb7-41de-8fe7-b92ccfa74f24; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 93 for extracted node 7a759780-3040-4fd7-9d89-f7603f2c5e34; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 94 for extracted node 8fe228d0-7040-485b-a517-fbea6a5ad409; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 96 for extracted node 905825dd-e989-4e35-a4bc-73397582e90f; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 100 for extracted node f74272d9-f9aa-452d-a919-f6dfda8b0490; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 101 for extracted node 0480b833-8820-4926-bbcd-9a6497754197; treating as no duplicate.\nWARNING  graphiti_core.utils.maintenance.node_operations:node_operations.py:613 Invalid duplicate_candidate_id 102 for extracted node 5d358bbd-8e6f-481a-86f9-28ac1f0f59b3; treating as no duplicate.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {"edges": [{"source_entity_name": "Transformer architecture", "target_entity_name": "Large Language Models", "relation_type": "HAS_BEEN_COMPONENT_IN_SUCCESS_OF", "fact": "The Transformer architecture has been a major component in the success of Large Language Models.", "valid_at": "2026-05-07T19:27:05.052191Z", "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "Transformer architecture", "target_entity_name": "Mistral", "relation_type": "IS_USED_FOR", "fact": "The Transformer a...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 1829 (char 1828)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 2 message(s), roles: ['user', 'user']\nRaw output (truncated): {"edges": [{"source_entity_name": "State Space Models", "target_entity_name": "Transformers", "relation_type": "CHALLENGES_DOMINANCE_OF", "fact": "State Space Models have become serious contenders in the field of sequential modeling, challenging the dominance of Transformers.", "valid_at": null, "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "Mixture of Experts", "target_entity_name": "Transformers", "relation_type": "IMPROVES", "fact": "Mixture of Experts has significantly ...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 6891 (char 6890)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {"edges": [{"source_entity_name": "state-spaces", "target_entity_name": "mamba", "relation_type": "OWNS", "fact": "state-spaces owns the mamba repository.", "valid_at": null, "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "mamba", "target_entity_name": "6 Branches", "relation_type": "HAS_COUNT", "fact": "The mamba repository has 6 branches.", "valid_at": null, "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "mamba", "target_entity_name": "33 Tags", "relat...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 35049 (char 35048)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 2 message(s), roles: ['user', 'user']\nRaw output (truncated): {"edges": [{"source_entity_name": "Transformer architecture", "target_entity_name": "Large Language Models", "relation_type": "IS_COMPONENT_IN", "fact": "The Transformer architecture has been a major component in the success of Large Language Models (LLMs).", "valid_at": null, "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "Transformer architecture", "target_entity_name": "Mistral", "relation_type": "IS_USED_FOR", "fact": "The Transformer architecture has been used for open-...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 2078 (char 2077)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 2 message(s), roles: ['user', 'user']\nRaw output (truncated): {\n  "edges": [\n    {\n      "source_entity_name": "state-spaces",\n      "target_entity_name": "mamba",\n      "relation_type": "OWNS_REPOSITORY",\n      "fact": "state-spaces owns the public repository mamba",\n      "valid_at": "2026-05-07T19:27:05.242881Z",\n      "invalid_at": null,\n      "episode_indices": [\n        0\n      ]\n    },\n    {\n      "source_entity_name": "mamba",\n      "target_entity_name": ".github",\n      "relation_type": "CONTAINS_FOLDER",\n      "fact": "mamba contains the folder ....\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Expecting property name enclosed in double quotes: line 59 column 38 (char 1652)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: HAS_SUBJECT\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {"edges": [{"source_entity_name": "arxiv:2312.00752", "target_entity_name": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", "relation_type": "HAS_TITLE", "fact": "The paper with the arXiv ID 2312.00752 is titled 'Mamba: Linear-Time Sequence Modeling with Selective State Spaces'.", "valid_at": null, "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", "target_entity_name": "arxiv:2312.00752", "r...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 12769 (char 12768)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {\n  "edges": [\n    {\n      "source_entity_name": "SSMs",\n      "target_entity_name": "Transformers",\n      "relation_type": "ARE_COMPETITIVE_WITH",\n      "fact": "SSMs are competitive with Transformers.",\n      "valid_at": "2023-12-13T00:00:00Z",\n      "invalid_at": null,\n      "episode_indices": [\n        0\n      ]\n    },\n    {\n      "source_entity_name": "Grigory Sapunov",\n      "target_entity_name": "Gonzo ML",\n      "relation_type": "PUBLISHED_ON",\n      "fact": "Grigory Sapunov published on...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 52 column 19 (char 1830)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 1 message(s), roles: ['user']\nRaw output (truncated): {\n  "edges": [\n    {\n      "source_entity_name": "Transformer architecture",\n      "target_entity_name": "Large Language Models (LLMs)",\n      "relation_type": "IS_MAJOR_COMPONENT_IN",\n      "fact": "The Transformer architecture has been a major component in the success of Large Language Models (LLMs).",\n      "valid_at": null,\n      "invalid_at": null,\n      "episode_indices": [\n        0\n      ]\n    },\n    {\n      "source_entity_name": "Transformer architecture",\n      "target_entity_name": "L...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Expecting property name enclosed in double quotes: line 852 column 1 (char 27505)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 1/2): \nWARNING  graphiti_core.embedder.gemini:gemini.py:157 Batch embedding failed for batch 1, falling back to individual processing: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}\nERROR    graphiti_core.embedder.gemini:gemini.py:180 Failed to embed individual item: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: ARE_BASED_ON\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: IS_A\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: IS_A\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: IS_A\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: IS_A\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: ADDRESSES_INEFFICIENCY_OF\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: PERFORMED_LESS_WELL_THAN\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: ENJOYS\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: HAS\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:225 Target entity not found in nodes for edge relation: ACHIEVES_STATE_OF_THE_ART_PERFORMANCE_ACROSS\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: USES\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.utils.maintenance.edge_operations:edge_operations.py:218 Source entity not found in nodes for edge relation: RECOMMENDS_SIMILAR_PAPER\nWARNING  graphiti_core.embedder.gemini:gemini.py:157 Batch embedding failed for batch 1, falling back to individual processing: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}\nERROR    graphiti_core.embedder.gemini:gemini.py:180 Failed to embed individual item: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 2 message(s), roles: ['user', 'user']\nRaw output (truncated): {\n  "edges": [\n    {\n      "source_entity_name": "Gonzo ML",\n      "target_entity_name": "Substack's Terms of Use",\n      "relation_type": "REQUIRES_AGREEMENT_TO",\n      "fact": "Gonzo ML requires subscribers to agree to Substack's Terms of Use.",\n      "valid_at": "2026-05-07T19:32:41.821739Z",\n      "invalid_at": null,\n      "episode_indices": [\n        0\n      ]\n    },\n    {\n      "source_entity_name": "Gonzo ML",\n      "target_entity_name": "Substack's Information Collection Notice",\n      "...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Expecting property name enclosed in double quotes: line 54 column 7 (char 1844)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error: \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:335 \U0001f980 LLM generation failed parsing as JSON, will try to salvage.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:338 Input messages: 2 message(s), roles: ['user', 'user']\nRaw output (truncated): {"edges": [{"source_entity_name": "Transformer architecture", "target_entity_name": "Large Language Models (LLMs)", "relation_type": "HAS_BEEN_MAJOR_COMPONENT_IN", "fact": "The Transformer architecture has been a major component in the success of Large Language Models (LLMs).", "valid_at": "2026-05-07T07:37:08.258418Z", "invalid_at": null, "episode_indices": [0]}, {"source_entity_name": "Transformer architecture", "target_entity_name": "Large Language Models (LLMs)", "relation_type": "USED_FOR",...\n\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:360 Error in generating LLM response: Failed to parse structured response: Unterminated string starting at: line 1 column 1785 (char 1784)\nWARNING  graphiti_core.llm_client.gemini_client:gemini_client.py:454 Retrying after application error (attempt 2/2): \nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:459 \U0001f980 LLM generation failed and retries are exhausted.\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:460 Input messages: 4 message(s), roles: ['system', 'user', 'user', 'user']\nNo raw output available\nERROR    graphiti_core.llm_client.gemini_client:gemini_client.py:461 Max retries (2) exceeded. Last error:
+_____________ test_eval[How does Mamba's selective state space d] _____________
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input="How does Mamba's selective state space differ from a standard SSM?", actual_output='', expected_out...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+>       asyncio.run(run())
+
+tests\test_eval.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python313\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_eval.py:47: in run
+    async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+.venv\Lib\site-packages\langgraph\pregel\main.py:3181: in astream
+    async for _ in runner.atick(
+.venv\Lib\site-packages\langgraph\pregel\_runner.py:304: in atick
+    await arun_with_retry(
+.venv\Lib\site-packages\langgraph\pregel\_retry.py:242: in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:705: in ainvoke
+    input = await asyncio.create_task(
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:473: in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\research_agent\nodes.py:48: in plan_node
+    resp = await _gen(
+src\research_agent\nodes.py:26: in _gen
+    return await _g_client.aio.models.generate_content(
+.venv\Lib\site-packages\google\genai\models.py:8418: in generate_content
+    response = await self._generate_content(
+.venv\Lib\site-packages\google\genai\models.py:6951: in _generate_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 429
+response_json = {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at http...ap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent) [429 Too Man...ng': 'gfet4t7; dur=384', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+>       raise ClientError(status_code, response_json, response)
+E       google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+E       During task with name 'plan' and id 'b2667582-23b8-51ff-c6dc-e75949615f0f'
+
+.venv\Lib\site-packages\google\genai\errors.py:269: ClientError
+_____________ test_eval[Compare Mamba and RWKV on long-context e] _____________
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input='Compare Mamba and RWKV on long-context efficiency.', actual_output='', expected_output='Both achiev...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+>       asyncio.run(run())
+
+tests\test_eval.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python313\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_eval.py:47: in run
+    async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+.venv\Lib\site-packages\langgraph\pregel\main.py:3181: in astream
+    async for _ in runner.atick(
+.venv\Lib\site-packages\langgraph\pregel\_runner.py:304: in atick
+    await arun_with_retry(
+.venv\Lib\site-packages\langgraph\pregel\_retry.py:242: in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:705: in ainvoke
+    input = await asyncio.create_task(
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:473: in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\research_agent\nodes.py:48: in plan_node
+    resp = await _gen(
+src\research_agent\nodes.py:26: in _gen
+    return await _g_client.aio.models.generate_content(
+.venv\Lib\site-packages\google\genai\models.py:8418: in generate_content
+    response = await self._generate_content(
+.venv\Lib\site-packages\google\genai\models.py:6951: in _generate_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 429
+response_json = {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at http...ap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent) [429 Too Man...ng': 'gfet4t7; dur=296', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+>       raise ClientError(status_code, response_json, response)
+E       google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+E       During task with name 'plan' and id '6cfcb21b-4e76-40bc-d406-957ad2aea4e7'
+
+.venv\Lib\site-packages\google\genai\errors.py:269: ClientError
+_____________ test_eval[What is the time complexity of attention] _____________
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input='What is the time complexity of attention vs SSMs?', actual_output='', expected_output='Attention is...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+>       asyncio.run(run())
+
+tests\test_eval.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python313\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_eval.py:47: in run
+    async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+.venv\Lib\site-packages\langgraph\pregel\main.py:3181: in astream
+    async for _ in runner.atick(
+.venv\Lib\site-packages\langgraph\pregel\_runner.py:304: in atick
+    await arun_with_retry(
+.venv\Lib\site-packages\langgraph\pregel\_retry.py:242: in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:705: in ainvoke
+    input = await asyncio.create_task(
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:473: in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\research_agent\nodes.py:48: in plan_node
+    resp = await _gen(
+src\research_agent\nodes.py:26: in _gen
+    return await _g_client.aio.models.generate_content(
+.venv\Lib\site-packages\google\genai\models.py:8418: in generate_content
+    response = await self._generate_content(
+.venv\Lib\site-packages\google\genai\models.py:6951: in _generate_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 429
+response_json = {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at http...ap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent) [429 Too Man...ng': 'gfet4t7; dur=361', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+>       raise ClientError(status_code, response_json, response)
+E       google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+E       During task with name 'plan' and id 'e08e4aa9-1267-736e-ac1f-727c1d81d0b1'
+
+.venv\Lib\site-packages\google\genai\errors.py:269: ClientError
+_____________ test_eval[What is the latest GDP figure for Tunisi] _____________
+
+fixture_db = WindowsPath('C:/Users/neela/AppData/Local/Temp/pytest-of-neela/pytest-16/kuzu0/graph.kuzu')
+tc = LLMTestCase(input='What is the latest GDP figure for Tunisia?', actual_output='', expected_output='The retrieved conte...servers=None, mcp_tools_called=None, mcp_resources_called=None, mcp_prompts_called=None, custom_column_key_values=None)
+
+    @pytest.mark.parametrize("tc", DATASET, ids=[t.input[:40] for t in DATASET])
+    def test_eval(fixture_db, tc):
+        async def run():
+            async with research_app() as app:
+                cfg = {"configurable": {"thread_id": f"test-{hash(tc.input)}"},
+                       "recursion_limit": 50}
+                async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+                    pass
+                state = await app.aget_state(cfg)
+                tc.actual_output = state.values["answer"]
+                tc.retrieval_context = state.values["retrieval_chunks"]
+>       asyncio.run(run())
+
+tests\test_eval.py:52: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Python313\Lib\asyncio\runners.py:195: in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\asyncio\base_events.py:725: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+tests\test_eval.py:47: in run
+    async for _ in app.astream({"question": tc.input}, cfg, stream_mode="updates"):
+.venv\Lib\site-packages\langgraph\pregel\main.py:3181: in astream
+    async for _ in runner.atick(
+.venv\Lib\site-packages\langgraph\pregel\_runner.py:304: in atick
+    await arun_with_retry(
+.venv\Lib\site-packages\langgraph\pregel\_retry.py:242: in arun_with_retry
+    return await task.proc.ainvoke(task.input, config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:705: in ainvoke
+    input = await asyncio.create_task(
+.venv\Lib\site-packages\langgraph\_internal\_runnable.py:473: in ainvoke
+    ret = await self.afunc(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src\research_agent\nodes.py:48: in plan_node
+    resp = await _gen(
+src\research_agent\nodes.py:26: in _gen
+    return await _g_client.aio.models.generate_content(
+.venv\Lib\site-packages\google\genai\models.py:8418: in generate_content
+    response = await self._generate_content(
+.venv\Lib\site-packages\google\genai\models.py:6951: in _generate_content
+    response = await self._api_client.async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1625: in async_request
+    result = await self._async_request(
+.venv\Lib\site-packages\google\genai\_api_client.py:1558: in _async_request
+    return await self._async_retry(  # type: ignore[no-any-return]
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:112: in __call__
+    do = await self.iter(retry_state=retry_state)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:157: in iter
+    result = await action(retry_state)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\_utils.py:111: in inner
+    return call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:413: in exc_check
+    raise retry_exc.reraise()
+          ^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\tenacity\__init__.py:184: in reraise
+    raise self.last_attempt.result()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Python313\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\tenacity\asyncio\__init__.py:116: in __call__
+    result = await fn(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\google\genai\_api_client.py:1489: in _async_request_once
+    await errors.APIError.raise_for_async_response(response)
+.venv\Lib\site-packages\google\genai\errors.py:247: in raise_for_async_response
+    await cls.raise_error_async(status_code, response_json, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+cls = <class 'google.genai.errors.APIError'>, status_code = 429
+response_json = {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at http...ap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+response = <ClientResponse(https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent) [429 Too Man...ng': 'gfet4t7; dur=205', 'Alt-Svc': 'h3=":443"; ma=2592000,h3-29=":443"; ma=2592000', 'Transfer-Encoding': 'chunked')>
+
+
+    @classmethod
+    async def raise_error_async(
+        cls, status_code: int, response_json: Any, response: Optional[
+            Union['ReplayResponse', httpx.Response, 'aiohttp.ClientResponse']
+        ]
+    ) -> None:
+      """Raises an appropriate APIError subclass based on the status code.
+    
+      Args:
+        status_code: The HTTP status code of the response.
+        response_json: The JSON body of the response, or a dict containing error
+          details.
+        response: The original response object.
+    
+      Raises:
+        ClientError: If the status code is in the 4xx range.
+        ServerError: If the status code is in the 5xx range.
+        APIError: For other error status codes.
+      """
+      if 400 <= status_code < 500:
+>       raise ClientError(status_code, response_json, response)
+E       google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. ', 'status': 'RESOURCE_EXHAUSTED'}}
+E       During task with name 'plan' and id 'f8bd5ce6-512c-eb31-70c7-f84afc30098e'
+
+.venv\Lib\site-packages\google\genai\errors.py:269: ClientError
+============================== warnings summary ===============================
+tests\test_eval.py:5
+tests\test_eval.py:5
+  D:\Downloads\QMUL\jobs\Research Companion Agent\tests\test_eval.py:5: DeprecationWarning: 'LLMTestCaseParams' is deprecated and will be removed in a future release. Use 'SingleTurnParams' instead.
+    from deepeval.test_case import LLMTestCaseParams
+
+.venv\Lib\site-packages\graphiti_core\driver\search_interface\search_interface.py:22
+  D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\graphiti_core\driver\search_interface\search_interface.py:22: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class SearchInterface(BaseModel):
+
+tests/test_eval.py: 14 warnings
+  D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\_api_client.py:895: DeprecationWarning: Inheritance class AiohttpClientSession from ClientSession is discouraged
+    class AiohttpClientSession(aiohttp.ClientSession):  # type: ignore[misc]
+
+tests/test_eval.py::test_eval[Who are the authors of the original Mamb]
+  D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <coroutine object safe_a_measure at 0x000002729D958CA0>
+  
+  Traceback (most recent call last):
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py", line 295, in _a_evaluate
+      res, cost = await self.model.a_generate_raw_response(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: 'GeminiModel' object has no attribute 'a_generate_raw_response'
+  
+  During handling of the above exception, another exception occurred:
+  
+  Traceback (most recent call last):
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\metrics\indicator.py", line 251, in safe_a_measure
+      await metric.a_measure(
+      ...<4 lines>...
+      )
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\tracing\tracing.py", line 1346, in async_wrapper
+      return await func(*args, **func_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py", line 188, in a_measure
+      g_score, reason = await self._a_evaluate(
+                        ^^^^^^^^^^^^^^^^^^^^^^^
+      ...<3 lines>...
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\tracing\tracing.py", line 1346, in async_wrapper
+      return await func(*args, **func_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\metrics\g_eval\g_eval.py", line 317, in _a_evaluate
+      return await a_generate_with_schema_and_extract(
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      ...<5 lines>...
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\metrics\utils.py", line 482, in a_generate_with_schema_and_extract
+      result, cost = await metric.model.a_generate_with_schema(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          prompt, schema=schema_cls
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\models\base_model.py", line 136, in a_generate_with_schema
+      return await self.a_generate(*args, schema=schema, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\tracing\tracing.py", line 1346, in async_wrapper
+      return await func(*args, **func_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 193, in async_wrapped
+      return await copy(fn, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 112, in __call__
+      do = await self.iter(retry_state=retry_state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 157, in iter
+      result = await action(retry_state)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\_utils.py", line 111, in inner
+      return call(*args, **kwargs)
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\__init__.py", line 393, in <lambda>
+      self._add_action_func(lambda rs: rs.outcome.result())
+                                       ~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\concurrent\futures\_base.py", line 449, in result
+      return self.__get_result()
+             ~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\concurrent\futures\_base.py", line 401, in __get_result
+      raise self._exception
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 116, in __call__
+      result = await fn(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\models\retry_policy.py", line 658, in attempt
+      return await asyncio.wait_for(coro, per_attempt_timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "C:\Python313\Lib\asyncio\tasks.py", line 507, in wait_for
+      return await fut
+             ^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\deepeval\models\llms\gemini_model.py", line 289, in a_generate
+      response = await client.aio.models.generate_content(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      ...<9 lines>...
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\models.py", line 8418, in generate_content
+      response = await self._generate_content(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          model=model, contents=contents, config=parsed_config
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\models.py", line 6951, in _generate_content
+      response = await self._api_client.async_request(
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          'post', path, request_dict, http_options
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\_api_client.py", line 1625, in async_request
+      result = await self._async_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+          http_request=http_request, http_options=http_options, stream=False
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\_api_client.py", line 1558, in _async_request
+      return await self._async_retry(  # type: ignore[no-any-return]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          self._async_request_once, http_request, stream
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 112, in __call__
+      do = await self.iter(retry_state=retry_state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 157, in iter
+      result = await action(retry_state)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\_utils.py", line 111, in inner
+      return call(*args, **kwargs)
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\__init__.py", line 413, in exc_check
+      raise retry_exc.reraise()
+            ~~~~~~~~~~~~~~~~~^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\__init__.py", line 184, in reraise
+      raise self.last_attempt.result()
+            ~~~~~~~~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\concurrent\futures\_base.py", line 449, in result
+      return self.__get_result()
+             ~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\concurrent\futures\_base.py", line 401, in __get_result
+      raise self._exception
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\tenacity\asyncio\__init__.py", line 116, in __call__
+      result = await fn(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\google\genai\_api_client.py", line 1481, in _async_request_once
+      response = await self._aiohttp_session.request(  # type: ignore[union-attr]
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      ...<6 lines>...
+      )
+      ^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\aiohttp\client.py", line 788, in _request
+      resp = await handler(req)
+             ^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\aiohttp\client.py", line 771, in _connect_and_send_request
+      conn.close()
+      ~~~~~~~~~~^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\aiohttp\connector.py", line 217, in close
+      self._connector._release(self._key, self._protocol, should_close=True)
+      ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\aiohttp\connector.py", line 835, in _release
+      protocol.close()
+      ~~~~~~~~~~~~~~^^
+    File "D:\Downloads\QMUL\jobs\Research Companion Agent\.venv\Lib\site-packages\aiohttp\client_proto.py", line 93, in close
+      transport.close()
+      ~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\asyncio\sslproto.py", line 116, in close
+      self._ssl_protocol._start_shutdown()
+      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\asyncio\sslproto.py", line 627, in _start_shutdown
+      self._shutdown_timeout_handle = self._loop.call_later(
+                                      ~~~~~~~~~~~~~~~~~~~~~^
+          self._ssl_shutdown_timeout,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+          self._check_shutdown_timeout
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      )
+      ^
+    File "C:\Python313\Lib\asyncio\base_events.py", line 799, in call_later
+      timer = self.call_at(self.time() + delay, callback, *args,
+                           context=context)
+    File "C:\Python313\Lib\asyncio\base_events.py", line 812, in call_at
+      self._check_closed()
+      ~~~~~~~~~~~~~~~~~~^^
+    File "C:\Python313\Lib\asyncio\base_events.py", line 556, in _check_closed
+      raise RuntimeError('Event loop is closed')
+  RuntimeError: Event loop is closed
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_eval.py::test_eval[When was the Mamba paper first posted to]
+FAILED tests/test_eval.py::test_eval[Who are the authors of the original Mamb]
+FAILED tests/test_eval.py::test_eval[How does Mamba's selective state space d]
+FAILED tests/test_eval.py::test_eval[Compare Mamba and RWKV on long-context e]
+FAILED tests/test_eval.py::test_eval[What is the time complexity of attention]
+FAILED tests/test_eval.py::test_eval[What is the latest GDP figure for Tunisi]
+================= 6 failed, 18 warnings in 951.08s (0:15:51) ==================
