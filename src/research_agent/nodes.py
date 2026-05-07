@@ -61,9 +61,19 @@ async def search_node(state: ResearchState) -> dict:
     return {"candidate_urls": await search_and_rank(state["plan"], k=8)}
 
 async def ingest_one(state: dict) -> dict:
-    """Per-URL: fetch -> salience -> (maybe) write to Graphiti. Reducer merges fan-in."""
+    """Per-URL: fetch -> salience -> (maybe) write to Graphiti. Reducer merges fan-in.
+
+    Per-URL failures (Firecrawl 403/WebsiteNotSupported, transient network)
+    must NOT abort the whole fan-out: swallow + record a skip so the rest of
+    the URLs still flow through.
+    """
     url = state["url"]
-    md = await fetch_markdown_polite(url)
+    try:
+        md = await fetch_markdown_polite(url)
+    except Exception as e:
+        return {"documents": [{"url": url, "skipped": True, "error": str(e)[:200]}]}
+    if not md:
+        return {"documents": [{"url": url, "skipped": True, "error": "empty markdown"}]}
     topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
     verdict_resp = await _gen(
         "gemini-2.5-pro",
