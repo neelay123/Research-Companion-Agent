@@ -22,6 +22,10 @@ def test_topics_loaded(monkeypatch, tmp_path):
     assert isinstance(s.TOPICS, list)
 
 def test_required_env_missing(monkeypatch):
+    # Patch at source: settings does `from dotenv import load_dotenv`, so reload
+    # re-binds from the patched dotenv module.
+    import dotenv
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **kw: None)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(KeyError):
         _reload_settings()
