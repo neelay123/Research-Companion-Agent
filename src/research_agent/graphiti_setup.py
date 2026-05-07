@@ -29,8 +29,11 @@ _init_lock: asyncio.Lock | None = None
 def _build(db_path: str) -> Graphiti:
     return Graphiti(
         graph_driver=KuzuDriver(db=db_path),
+        # Flash for extraction: higher RPM headroom, less prone to 503 "high demand"
+        # than Pro. Extraction quality acceptable for hobby project; agent reasoning
+        # in nodes.py still uses Pro.
         llm_client=GeminiClient(config=LLMConfig(
-            api_key=GEMINI_API_KEY, model="gemini-2.5-pro",
+            api_key=GEMINI_API_KEY, model="gemini-2.5-flash",
         )),
         embedder=GeminiEmbedder(config=GeminiEmbedderConfig(
             api_key=GEMINI_API_KEY,

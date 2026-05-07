@@ -91,12 +91,18 @@ async def ingest_one(state: dict) -> dict:
         return {"documents": [{"url": url, "skipped": True,
                                 "score": verdict.score, "reason": verdict.reason}]}
     g = await get_graphiti()
-    ep_result = await g.add_episode(
-        name=url,
-        episode_body=md,
-        source_description=f"web:{url}",
-        reference_time=datetime.now(timezone.utc),
-    )
+    try:
+        ep_result = await g.add_episode(
+            name=url,
+            episode_body=md,
+            source_description=f"web:{url}",
+            reference_time=datetime.now(timezone.utc),
+        )
+    except Exception as e:
+        # Graphiti's internal LLM extraction can fail on 503/rate-limit even after
+        # its own 2-attempt retry. Skip rather than abort the whole fan-out.
+        return {"documents": [{"url": url, "skipped": True,
+                                "error": f"add_episode: {str(e)[:200]}"}]}
     ep_uuid = ep_result.episode.uuid
     return {
         "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
