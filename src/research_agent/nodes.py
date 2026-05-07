@@ -63,51 +63,46 @@ async def search_node(state: ResearchState) -> dict:
 async def ingest_one(state: dict) -> dict:
     """Per-URL: fetch -> salience -> (maybe) write to Graphiti. Reducer merges fan-in.
 
-    Per-URL failures (Firecrawl 403/WebsiteNotSupported, transient network)
-    must NOT abort the whole fan-out: swallow + record a skip so the rest of
-    the URLs still flow through.
+    Any per-URL failure (Firecrawl 403, Gemini 503/exhausted retries, Graphiti
+    extraction error) must NOT abort the whole fan-out: swallow + record a skip
+    so the rest of the URLs still flow through.
     """
     url = state["url"]
     try:
         md = await fetch_markdown_polite(url)
-    except Exception as e:
-        return {"documents": [{"url": url, "skipped": True, "error": str(e)[:200]}]}
-    if not md:
-        return {"documents": [{"url": url, "skipped": True, "error": "empty markdown"}]}
-    topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
-    verdict_resp = await _gen(
-        "gemini-2.5-pro",
-        f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
-        response_mime_type="application/json",
-        response_schema=SalienceVerdict,
-        thinking_config=types.ThinkingConfig(thinking_budget=256),
-        system_instruction=(
-            "Score relevance 0-1 to the research focus AND the long-term topics. "
-            "Extract novel atomic claims as short factual sentences."
-        ),
-    )
-    verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
-    if verdict.score < SALIENCE_CUTOFF:
-        return {"documents": [{"url": url, "skipped": True,
-                                "score": verdict.score, "reason": verdict.reason}]}
-    g = await get_graphiti()
-    try:
+        if not md:
+            return {"documents": [{"url": url, "skipped": True, "error": "empty markdown"}]}
+        topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
+        verdict_resp = await _gen(
+            "gemini-2.5-pro",
+            f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
+            response_mime_type="application/json",
+            response_schema=SalienceVerdict,
+            thinking_config=types.ThinkingConfig(thinking_budget=256),
+            system_instruction=(
+                "Score relevance 0-1 to the research focus AND the long-term topics. "
+                "Extract novel atomic claims as short factual sentences."
+            ),
+        )
+        verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
+        if verdict.score < SALIENCE_CUTOFF:
+            return {"documents": [{"url": url, "skipped": True,
+                                    "score": verdict.score, "reason": verdict.reason}]}
+        g = await get_graphiti()
         ep_result = await g.add_episode(
             name=url,
             episode_body=md,
             source_description=f"web:{url}",
             reference_time=datetime.now(timezone.utc),
         )
+        ep_uuid = ep_result.episode.uuid
+        return {
+            "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
+            "salient_episode_ids": [ep_uuid],
+        }
     except Exception as e:
-        # Graphiti's internal LLM extraction can fail on 503/rate-limit even after
-        # its own 2-attempt retry. Skip rather than abort the whole fan-out.
         return {"documents": [{"url": url, "skipped": True,
-                                "error": f"add_episode: {str(e)[:200]}"}]}
-    ep_uuid = ep_result.episode.uuid
-    return {
-        "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
-        "salient_episode_ids": [ep_uuid],
-    }
+                                "error": f"{type(e).__name__}: {str(e)[:200]}"}]}
 
 async def retrieve_node(state: ResearchState) -> dict:
     g = await get_graphiti()
