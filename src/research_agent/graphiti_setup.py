@@ -65,7 +65,13 @@ async def get_graphiti() -> Graphiti:
             path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
             _instance = _build(path)
         if not _indices_built:
-            await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
+            try:
+                await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
+            except RuntimeError as e:
+                # Pre-built fixture: indices already exist on disk, this process just
+                # didn't know yet. Treat as success.
+                if "already exists" not in str(e):
+                    raise
             _indices_built = True
         return _instance
 
