@@ -421,6 +421,17 @@ git commit -m "feat: LangGraph state TypedDicts for research and reflect"
 - [ ] **Step 1: Write `src/research_agent/graphiti_setup.py`**
 
 ```python
+"""Lazy Graphiti singleton wired to Gemini for LLM, embedding, and reranking.
+
+The constructor's `cross_encoder` is mandatory: omitting it falls back to
+OpenAIRerankerClient, which silently demands OPENAI_API_KEY at first use.
+
+`get_graphiti()` is async because graphiti-core 0.29.0's
+Graphiti.build_indices_and_constraints() is a no-op for the Kuzu driver — the
+real implementation lives at driver.graph_ops, and must be invoked once before
+the first hybrid search. Doing it here means no consumer needs to know the
+workaround exists.
+"""
 import os
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
@@ -429,10 +440,12 @@ from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerCli
 from graphiti_core.driver.kuzu_driver import KuzuDriver
 from .settings import GEMINI_API_KEY
 
-# UNVERIFIED: SEMAPHORE_LIMIT default is 10. Set high so LangGraph max_concurrency dominates.
+# graphiti-core's SEMAPHORE_LIMIT default is 20 (graphiti_core/helpers.py).
+# Set high so LangGraph's max_concurrency is the binding constraint.
 os.environ.setdefault("SEMAPHORE_LIMIT", "32")
 
 _instance: Graphiti | None = None
+_indices_built: bool = False
 
 def _build(db_path: str) -> Graphiti:
     return Graphiti(
@@ -443,26 +456,35 @@ def _build(db_path: str) -> Graphiti:
         embedder=GeminiEmbedder(config=GeminiEmbedderConfig(
             api_key=GEMINI_API_KEY,
             embedding_model="gemini-embedding-001",
-            embedding_dim=1536,   # UNVERIFIED: field name. Try `output_dimensionality` if rejected.
+            embedding_dim=1536,
         )),
         cross_encoder=GeminiRerankerClient(config=LLMConfig(
             api_key=GEMINI_API_KEY,
-            model="gemini-2.5-flash",  # UNVERIFIED: current GA flash-lite name
+            model="gemini-2.5-flash-lite",
         )),
     )
 
-def get_graphiti() -> Graphiti:
-    """Lazy singleton. Reads RESEARCH_KUZU_PATH at first call so tests can override."""
-    global _instance
+async def get_graphiti() -> Graphiti:
+    """Lazy singleton. Reads RESEARCH_KUZU_PATH on first call so tests can override.
+
+    Async because the first call must build the FTS indices via the Kuzu
+    driver's graph_ops shim (Graphiti.build_indices_and_constraints itself is a
+    no-op for KuzuDriver in 0.29.0).
+    """
+    global _instance, _indices_built
     if _instance is None:
         path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
         _instance = _build(path)
+    if not _indices_built:
+        await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
+        _indices_built = True
     return _instance
 
 def reset_graphiti() -> None:
-    """Tests only: drop singleton so next get_graphiti() re-reads env."""
-    global _instance
+    """Tests only: drop singleton + index-built flag so next get_graphiti() re-reads env."""
+    global _instance, _indices_built
     _instance = None
+    _indices_built = False
 ```
 
 - [ ] **Step 2: Resolve UNVERIFIED tags**
@@ -499,17 +521,24 @@ def scratch_db(tmp_path, monkeypatch):
     reset_graphiti()
 
 def test_graphiti_round_trip(scratch_db):
-    """One add_episode + one search. Costs ~1¢ in Gemini calls."""
+    """One add_episode + one search via get_graphiti(). Costs ~1¢ in Gemini calls."""
+    from datetime import datetime, timezone
     async def go():
-        g = get_graphiti()
-        await g.build_indices_and_constraints()
-        ep = await g.add_episode(
+        g = await get_graphiti()
+        # build_indices_and_constraints is now handled inside get_graphiti() on first call.
+        result = await g.add_episode(
             name="smoke",
-            episode_body="Mamba is a state-space model introduced in 2023.",
+            episode_body=(
+                "Mamba is a state-space model introduced in 2023 by Albert Gu and "
+                "Tri Dao at Carnegie Mellon."
+            ),
             source_description="smoke-test",
-            reference_time=None,   # UNVERIFIED — see spec §14 Group B
+            reference_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
-        assert ep.uuid
+        # add_episode returns AddEpisodeResults; episode UUID is at .episode.uuid
+        assert result.episode.uuid
+        # Single-entity sentences yield zero EntityEdges; assert relational edges exist
+        assert len(result.edges) >= 1, "Gemini extracted zero edges (try a more relational sentence)"
         results = await g.search(query="state space models", num_results=5)
         assert len(results) >= 1
     asyncio.run(go())
@@ -520,7 +549,7 @@ def test_graphiti_round_trip(scratch_db):
 ```bash
 pytest tests/test_smoke_graphiti.py -v -m smoke
 ```
-Expected: PASS. If `reference_time=None` raises, change to `datetime.utcnow()` and update spec §9 + this test.
+Expected: PASS in ~30-60s. Cost ~$0.01.
 
 - [ ] **Step 5: Commit**
 
@@ -805,6 +834,7 @@ Live integration is tested in T12. Per-node unit tests would require mocking —
 
 Add these imports at the top (alongside existing):
 ```python
+from datetime import datetime, timezone
 from .schemas import Plan, SalienceVerdict, Answer
 from .state import ResearchState
 from .graphiti_setup import get_graphiti
@@ -848,18 +878,20 @@ async def ingest_one(state: dict) -> dict:
     verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
     if verdict.score < SALIENCE_CUTOFF:
         return {"documents": [{"url": url, "skipped": True, "score": verdict.score}]}
-    ep = await get_graphiti().add_episode(
+    g = await get_graphiti()
+    ep_result = await g.add_episode(
         name=url, episode_body=md, source_description=f"web:{url}",
-        reference_time=None,   # UNVERIFIED: some versions reject None
+        reference_time=datetime.now(timezone.utc),
     )
+    ep_uuid = ep_result.episode.uuid
     return {
-        "documents": [{"url": url, "episode_uuid": ep.uuid, "score": verdict.score}],
-        "salient_episode_ids": [ep.uuid],
+        "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
+        "salient_episode_ids": [ep_uuid],
     }
 
 async def retrieve_node(state: ResearchState) -> dict:
-    # UNVERIFIED: confirm graphiti.search uses configured cross_encoder by default.
-    results = await get_graphiti().search(query=state["question"], num_results=20)
+    g = await get_graphiti()
+    results = await g.search(query=state["question"], num_results=20)
     chunks = [f"[{r.uuid}] {r.fact}" for r in results]
     return {"retrieval_chunks": chunks, "context": "\n\n".join(chunks)}
 
@@ -884,14 +916,9 @@ Expected: `ok`.
 
 - [ ] **Step 3: Resolve UNVERIFIED tags**
 
-For each `UNVERIFIED:` introduced in this task, run a real probe:
-
-```bash
-python -c "from graphiti_core import Graphiti; help(Graphiti.add_episode)"
-python -c "from graphiti_core import Graphiti; help(Graphiti.search)"
-```
-
-If `search` requires explicit `rerank=True` (or similar), update `retrieve_node` and the spec §9 + §14 Group F in the same commit.
+Already resolved in T5 — see the smoke test's NOTE block. The two notable
+items (`add_episode.reference_time` semantics and `search()` cross_encoder
+behavior) are now codified directly in the node bodies above.
 
 - [ ] **Step 4: Commit**
 
@@ -1142,7 +1169,7 @@ If the Kuzu fixture is large (>10 MB), consider Git LFS or excluding the binary 
 """Manual reflection pass. Run:  python -m research_agent.reflect [--since 2026-04-01]"""
 import argparse, asyncio
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from google.genai import types
@@ -1156,13 +1183,12 @@ class Synthesis(BaseModel):
     patterns: list[str]
 
 async def gather_recent(s: ReflectState) -> dict:
-    # UNVERIFIED: graphiti.get_episodes(after=...) signature
-    eps = await get_graphiti().get_episodes(after=s["since_iso"])
+    g = await get_graphiti()
+    eps = await g.get_episodes(after=s["since_iso"])
     return {"episode_uuids": [e.uuid for e in eps]}
 
 async def synthesize(s: ReflectState) -> dict:
-    g = get_graphiti()
-    # UNVERIFIED: per-UUID fetch API name
+    g = await get_graphiti()
     eps = [await g.get_episode_by_uuid(u) for u in s["episode_uuids"]]
     body = "\n---\n".join(e.content for e in eps)
     resp = await _gen(
@@ -1175,14 +1201,15 @@ async def synthesize(s: ReflectState) -> dict:
     return {"patterns": _parsed_or_raise(resp, "Synthesis").patterns}
 
 async def write_back(s: ReflectState) -> dict:
+    g = await get_graphiti()
     uuids = []
     for p in s["patterns"]:
-        ep = await get_graphiti().add_episode(
+        result = await g.add_episode(
             name=f"reflection:{date.today().isoformat()}",
             episode_body=p, source_description="reflection",
-            reference_time=None,
+            reference_time=datetime.now(timezone.utc),
         )
-        uuids.append(ep.uuid)
+        uuids.append(result.episode.uuid)
     return {"new_synthesis_uuids": uuids}
 
 def _build_reflect() -> StateGraph:

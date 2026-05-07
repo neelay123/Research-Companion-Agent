@@ -32,7 +32,7 @@ This doc is the post-pressure-test consolidation of Revision 2. It encodes locke
 - **Orchestration:** LangGraph 0.6+ `StateGraph` with `AsyncSqliteSaver` checkpointer (UNVERIFIED: package `langgraph-checkpoint-sqlite`, import `langgraph.checkpoint.sqlite.aio.AsyncSqliteSaver`)
 - **LLM:** Gemini 2.5 Pro via `google-genai` (UNVERIFIED: pricing $1.25/$10 per M tokens ≤200K)
 - **Embedder:** `gemini-embedding-001` @ 1536 dims via Matryoshka (UNVERIFIED: SDK param name — likely `output_dimensionality` on Google SDK; Graphiti's `GeminiEmbedderConfig` field name unverified, may be `embedding_dim`)
-- **Reranker:** `GeminiRerankerClient` pinned to `gemini-2.5-flash` (UNVERIFIED: current GA flash-lite name — `flash-lite-preview-06-17` reportedly 404s)
+- **Reranker:** `GeminiRerankerClient` pinned to `gemini-2.5-flash-lite` (verified working in T5 smoke test)
 - **Web research:** Firecrawl primary, Tavily fallback. No mocks.
 - **Eval:** DeepEval with `GeminiModel` judge (UNVERIFIED: native non-LiteLLM `GeminiModel` in `deepeval.models`)
 - **Frontend:** Streamlit, one page
@@ -191,6 +191,17 @@ TOPICS: list[str] = _cfg.get("research", {}).get("topics", [])
 
 ```python
 # src/research_agent/graphiti_setup.py
+"""Lazy Graphiti singleton wired to Gemini for LLM, embedding, and reranking.
+
+The constructor's `cross_encoder` is mandatory: omitting it falls back to
+OpenAIRerankerClient, which silently demands OPENAI_API_KEY at first use.
+
+`get_graphiti()` is async because graphiti-core 0.29.0's
+Graphiti.build_indices_and_constraints() is a no-op for the Kuzu driver — the
+real implementation lives at driver.graph_ops, and must be invoked once before
+the first hybrid search. Doing it here means no consumer needs to know the
+workaround exists.
+"""
 import os
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
@@ -199,10 +210,12 @@ from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerCli
 from graphiti_core.driver.kuzu_driver import KuzuDriver
 from .settings import GEMINI_API_KEY
 
-# UNVERIFIED: SEMAPHORE_LIMIT default is 10. Set high so LangGraph max_concurrency dominates.
+# graphiti-core's SEMAPHORE_LIMIT default is 20 (graphiti_core/helpers.py).
+# Set high so LangGraph's max_concurrency is the binding constraint.
 os.environ.setdefault("SEMAPHORE_LIMIT", "32")
 
 _instance: Graphiti | None = None
+_indices_built: bool = False
 
 def _build(db_path: str) -> Graphiti:
     return Graphiti(
@@ -213,27 +226,36 @@ def _build(db_path: str) -> Graphiti:
         embedder=GeminiEmbedder(config=GeminiEmbedderConfig(
             api_key=GEMINI_API_KEY,
             embedding_model="gemini-embedding-001",
-            embedding_dim=1536,   # UNVERIFIED: field name. Try `output_dimensionality` if rejected.
+            embedding_dim=1536,
         )),
         # Critical: explicit reranker. Default is OpenAIRerankerClient which demands OPENAI_API_KEY.
         cross_encoder=GeminiRerankerClient(config=LLMConfig(
             api_key=GEMINI_API_KEY,
-            model="gemini-2.5-flash",  # UNVERIFIED: current GA flash-lite name
+            model="gemini-2.5-flash-lite",
         )),
     )
 
-def get_graphiti() -> Graphiti:
-    """Lazy singleton. Reads RESEARCH_KUZU_PATH at first call so tests can override."""
-    global _instance
+async def get_graphiti() -> Graphiti:
+    """Lazy singleton. Reads RESEARCH_KUZU_PATH on first call so tests can override.
+
+    Async because the first call must build the FTS indices via the Kuzu
+    driver's graph_ops shim (Graphiti.build_indices_and_constraints itself is a
+    no-op for KuzuDriver in 0.29.0).
+    """
+    global _instance, _indices_built
     if _instance is None:
         path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
         _instance = _build(path)
+    if not _indices_built:
+        await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
+        _indices_built = True
     return _instance
 
 def reset_graphiti() -> None:
-    """Tests only: drop singleton so next get_graphiti() re-reads env."""
-    global _instance
+    """Tests only: drop singleton + index-built flag so next get_graphiti() re-reads env."""
+    global _instance, _indices_built
     _instance = None
+    _indices_built = False
 ```
 
 ## 8. Web adapter
@@ -295,6 +317,7 @@ UNVERIFIED: Firecrawl/Tavily Python SDK method names and kwargs (`scrape_url`, `
 ```python
 # src/research_agent/nodes.py
 import asyncio
+from datetime import datetime, timezone
 from google import genai
 from google.genai import types
 from google.api_core import exceptions as gx
@@ -373,19 +396,20 @@ async def ingest_one(state: dict) -> dict:
         return {"documents": [{"url": url, "skipped": True, "score": verdict.score}]}
 
     # Two-tier: above cutoff → full extraction. (Three-tier dropped — see §1.)
-    ep = await get_graphiti().add_episode(
+    g = await get_graphiti()
+    ep_result = await g.add_episode(
         name=url, episode_body=md, source_description=f"web:{url}",
-        reference_time=None,   # UNVERIFIED: some versions reject None — pass datetime.utcnow() if so
+        reference_time=datetime.now(timezone.utc),
     )
+    ep_uuid = ep_result.episode.uuid
     return {
-        "documents": [{"url": url, "episode_uuid": ep.uuid, "score": verdict.score}],
-        "salient_episode_ids": [ep.uuid],
+        "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
+        "salient_episode_ids": [ep_uuid],
     }
 
 async def retrieve_node(state: ResearchState) -> dict:
-    # UNVERIFIED: confirm graphiti.search uses configured cross_encoder by default.
-    # If not, look for a `rerank=True` flag or call an explicit rerank() method.
-    results = await get_graphiti().search(query=state["question"], num_results=20)
+    g = await get_graphiti()
+    results = await g.search(query=state["question"], num_results=20)
     chunks = [f"[{r.uuid}] {r.fact}" for r in results]
     return {"retrieval_chunks": chunks, "context": "\n\n".join(chunks)}
 
@@ -457,7 +481,7 @@ Lifecycle fix from Revision 2: `__aenter__` is paired with `__aexit__` via `asyn
 """Manual reflection pass. Run:  python -m research_agent.reflect [--since 2026-04-01]"""
 import argparse, asyncio
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from google.genai import types
@@ -471,13 +495,12 @@ class Synthesis(BaseModel):
     patterns: list[str]
 
 async def gather_recent(s: ReflectState) -> dict:
-    # UNVERIFIED: Graphiti API for "episodes since timestamp". Likely graphiti.get_episodes(since=...)
-    eps = await get_graphiti().get_episodes(after=s["since_iso"])
+    g = await get_graphiti()
+    eps = await g.get_episodes(after=s["since_iso"])
     return {"episode_uuids": [e.uuid for e in eps]}  # state holds UUIDs only — bodies re-fetched
 
 async def synthesize(s: ReflectState) -> dict:
-    g = get_graphiti()
-    # UNVERIFIED: per-UUID fetch API name (likely graphiti.get_episode_by_uuid or similar)
+    g = await get_graphiti()
     eps = [await g.get_episode_by_uuid(u) for u in s["episode_uuids"]]
     body = "\n---\n".join(e.content for e in eps)
     resp = await _gen(
@@ -490,14 +513,15 @@ async def synthesize(s: ReflectState) -> dict:
     return {"patterns": _parsed_or_raise(resp, "Synthesis").patterns}
 
 async def write_back(s: ReflectState) -> dict:
+    g = await get_graphiti()
     uuids = []
     for p in s["patterns"]:
-        ep = await get_graphiti().add_episode(
+        result = await g.add_episode(
             name=f"reflection:{date.today().isoformat()}",
             episode_body=p, source_description="reflection",
-            reference_time=None,
+            reference_time=datetime.now(timezone.utc),
         )
-        uuids.append(ep.uuid)
+        uuids.append(result.episode.uuid)
     return {"new_synthesis_uuids": uuids}
 
 def _build_reflect() -> StateGraph:
@@ -689,7 +713,7 @@ def test_eval(fixture_db, tc):
     assert_test(tc, [CITATION_CORRECTNESS, TEMPORAL_CORRECTNESS])
 ```
 
-`graphiti_setup.get_graphiti()` reads `RESEARCH_KUZU_PATH` lazily on first call, so the fixture path set in the pytest fixture is honored. Tests copy the committed fixture into a tempdir per session so the original is never mutated.
+`graphiti_setup.get_graphiti()` is `async` and reads `RESEARCH_KUZU_PATH` lazily on first call, so the fixture path set in the pytest fixture is honored. The first call also builds Kuzu's FTS indices once (graphiti-core 0.29.0's `Graphiti.build_indices_and_constraints()` is a no-op for KuzuDriver — see §14 Group F). Tests copy the committed fixture into a tempdir per session so the original is never mutated.
 
 ## 14. UNVERIFIED claims (reading list before `pip install`)
 
@@ -701,9 +725,9 @@ Group A — versions / packages:
 Group B — Graphiti API surface:
 - `KuzuDriver(db=...)` constructor signature
 - `GeminiClient`, `GeminiEmbedder`, `GeminiRerankerClient` import paths and config field names (`embedding_dim` vs `output_dimensionality`)
-- Default `cross_encoder` falls back to `OpenAIRerankerClient` when omitted
-- `add_episode` signature and `reference_time=None` acceptance
-- `search` uses configured reranker by default, or needs explicit flag
+- Default `cross_encoder` falls back to `OpenAIRerankerClient` when omitted (CONFIRMED in T5)
+- `add_episode` signature — CONFIRMED in T5: `reference_time` is mandatory (None rejected), pass `datetime.now(timezone.utc)`
+- `search` uses configured reranker by default, or needs explicit flag — CONFIRMED in T5: search() invokes reranker without an explicit flag
 - `get_episodes(after=...)` exists for the reflection pass
 - Param to skip triple extraction for raw-store-only episodes
 
@@ -712,7 +736,7 @@ Group C — Gemini SDK:
 - Pricing $1.25/$10 per M tokens at ≤200K context
 - Pro rejects `thinking_budget=0`; Flash/Flash-Lite accept
 - `gemini-embedding-001` Matryoshka dims, max input 2048 tokens
-- Current GA flash-lite name (`flash-lite-preview-06-17` reportedly 404s)
+- Current GA flash-lite name — CONFIRMED in T5: `gemini-2.5-flash-lite` works for the reranker
 
 Group D — web SDKs:
 - Firecrawl Python SDK method `scrape_url(url, params={"formats": [...]})`
@@ -725,8 +749,13 @@ Group E — infra:
 
 Group F — undocumented behavior to confirm empirically:
 - `add_episode` idempotency on duplicate URLs — re-ingesting the same arxiv abs across sessions: does Graphiti dedupe by `name`/`source_description`, or do duplicate episodic nodes accumulate?
-- Whether `graphiti.search()` invokes the configured `cross_encoder` automatically, or requires an explicit `rerank=True` / separate `rerank()` call
 - Per-domain `_domain_locks` in `web.py` are module-global — fine for the single-process Streamlit app, silently ineffective if a worker process is added later
+
+Graphiti 0.29.0 API quirks discovered during T5 (now codified in `graphiti_setup.py` / nodes / reflect):
+1. `Graphiti.build_indices_and_constraints()` is a **no-op for KuzuDriver** in 0.29.0; the real implementation lives at `driver.graph_ops.build_indices_and_constraints(driver)`. Handled inside `get_graphiti()` so consumers don't need to know the workaround exists.
+2. `add_episode` returns `AddEpisodeResults`, **not** an `EpisodicNode`; the episode UUID is at `result.episode.uuid`. Consumers that previously used `ep.uuid` must switch to `result.episode.uuid`.
+3. `search()` returns `list[EntityEdge]` only — episodes whose body contains a single named entity yield zero edges and an empty result set. Smoke-test bodies must be deliberately relational.
+4. `reference_time=None` is rejected; pass a `datetime` (UTC, e.g. `datetime.now(timezone.utc)`).
 
 Each tag in the code is exactly `UNVERIFIED:` so a single grep surfaces them all.
 
