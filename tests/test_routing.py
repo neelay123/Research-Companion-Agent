@@ -1,5 +1,6 @@
+import asyncio
 from langgraph.types import Send
-from research_agent.graph import fan_out_ingest, should_search_more
+from research_agent.graph import fan_out_ingest, should_search_more, research_app
 
 def test_fan_out_emits_one_send_per_url():
     state = {"candidate_urls": ["a", "b", "c"], "question": "q"}
@@ -24,3 +25,10 @@ def test_retrieve_when_iteration_capped():
 def test_default_zero_iteration():
     s = {"salient_episode_ids": []}
     assert should_search_more(s) == "plan"
+
+def test_research_graph_compiles_with_expected_nodes():
+    async def go():
+        async with research_app() as app:
+            nodes = set(app.get_graph().nodes.keys())
+        assert {"plan", "search", "ingest_one", "retrieve", "answer"}.issubset(nodes)
+    asyncio.run(go())
