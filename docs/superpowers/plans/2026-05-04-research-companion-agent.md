@@ -432,6 +432,7 @@ real implementation lives at driver.graph_ops, and must be invoked once before
 the first hybrid search. Doing it here means no consumer needs to know the
 workaround exists.
 """
+import asyncio
 import os
 from graphiti_core import Graphiti
 from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
@@ -446,12 +447,16 @@ os.environ.setdefault("SEMAPHORE_LIMIT", "32")
 
 _instance: Graphiti | None = None
 _indices_built: bool = False
+_init_lock: asyncio.Lock | None = None
 
 def _build(db_path: str) -> Graphiti:
     return Graphiti(
         graph_driver=KuzuDriver(db=db_path),
+        # Flash for extraction: higher RPM headroom, less prone to 503 "high demand"
+        # than Pro. Extraction quality acceptable for hobby project; agent reasoning
+        # in nodes.py still uses Pro.
         llm_client=GeminiClient(config=LLMConfig(
-            api_key=GEMINI_API_KEY, model="gemini-2.5-pro",
+            api_key=GEMINI_API_KEY, model="gemini-2.5-flash",
         )),
         embedder=GeminiEmbedder(config=GeminiEmbedderConfig(
             api_key=GEMINI_API_KEY,
@@ -470,21 +475,35 @@ async def get_graphiti() -> Graphiti:
     Async because the first call must build the FTS indices via the Kuzu
     driver's graph_ops shim (Graphiti.build_indices_and_constraints itself is a
     no-op for KuzuDriver in 0.29.0).
+
+    Guarded by an asyncio.Lock because LangGraph fan-out may dispatch many
+    concurrent first-callers; without the lock multiple coroutines race past
+    the `_indices_built` check and CREATE_FTS_INDEX raises "already exists".
     """
-    global _instance, _indices_built
-    if _instance is None:
-        path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
-        _instance = _build(path)
-    if not _indices_built:
-        await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
-        _indices_built = True
-    return _instance
+    global _instance, _indices_built, _init_lock
+    if _init_lock is None:
+        _init_lock = asyncio.Lock()
+    async with _init_lock:
+        if _instance is None:
+            path = os.environ.get("RESEARCH_KUZU_PATH", "./graph.kuzu")
+            _instance = _build(path)
+        if not _indices_built:
+            try:
+                await _instance.driver.graph_ops.build_indices_and_constraints(_instance.driver)
+            except RuntimeError as e:
+                # Pre-built fixture: indices already exist on disk, this process just
+                # didn't know yet. Treat as success.
+                if "already exists" not in str(e):
+                    raise
+            _indices_built = True
+        return _instance
 
 def reset_graphiti() -> None:
     """Tests only: drop singleton + index-built flag so next get_graphiti() re-reads env."""
-    global _instance, _indices_built
+    global _instance, _indices_built, _init_lock
     _instance = None
     _indices_built = False
+    _init_lock = None
 ```
 
 - [ ] **Step 2: Resolve UNVERIFIED tags**
@@ -572,15 +591,24 @@ git commit -m "feat: lazy Graphiti singleton + live round-trip smoke test"
 import asyncio, logging
 from collections import defaultdict
 from urllib.parse import urlparse
-from firecrawl import FirecrawlApp
+# firecrawl-py 4.x: package imports as `firecrawl`; primary class is `Firecrawl`
+# (the legacy `FirecrawlApp` alias exists but exposes no `scrape_url`/`scrape`
+# methods on this version — we use `Firecrawl` directly).
+from firecrawl import Firecrawl
 from tavily import TavilyClient
 from .settings import FIRECRAWL_API_KEY, TAVILY_API_KEY, TAVILY_MIN_SCORE
 
 log = logging.getLogger(__name__)
-_firecrawl = FirecrawlApp(api_key=FIRECRAWL_API_KEY)
+_firecrawl = Firecrawl(api_key=FIRECRAWL_API_KEY)
 _tavily = TavilyClient(api_key=TAVILY_API_KEY) if TAVILY_API_KEY else None
 
+
 async def search_and_rank(queries: list[str], k: int = 8) -> list[str]:
+    """Tavily fans out cheap, returns URLs above threshold.
+
+    Tavily v0.7+ `search(query, max_results=k)` returns a dict shaped
+    `{"results": [{"url": str, "score": float, "title": ..., "content": ...}, ...]}`.
+    """
     if not _tavily:
         raise RuntimeError("TAVILY_API_KEY required for search fan-out")
     urls: dict[str, float] = {}
@@ -591,13 +619,20 @@ async def search_and_rank(queries: list[str], k: int = 8) -> list[str]:
                 urls[r["url"]] = max(urls.get(r["url"], 0), r["score"])
     return [u for u, _ in sorted(urls.items(), key=lambda kv: -kv[1])[:k]]
 
+
 async def fetch_markdown(url: str, attempts: int = 3) -> str:
+    """Firecrawl with exponential backoff. Raises after final attempt — node lets LangGraph checkpoint+resume.
+
+    Firecrawl v4.x: method is `scrape(url, *, formats=[...])` (not `scrape_url(url, params=...)`),
+    and the return value is a Pydantic `firecrawl.v2.types.Document` whose markdown is on the
+    `.markdown` attribute (not `.get("markdown")`).
+    """
     for i in range(attempts):
         try:
-            res = await asyncio.to_thread(
-                _firecrawl.scrape_url, url, params={"formats": ["markdown"]},
+            doc = await asyncio.to_thread(
+                _firecrawl.scrape, url, formats=["markdown"],
             )
-            return res.get("markdown") or ""
+            return getattr(doc, "markdown", "") or ""
         except Exception as e:
             log.warning("firecrawl %s attempt %d: %s", url, i + 1, e)
             if i == attempts - 1:
@@ -605,9 +640,14 @@ async def fetch_markdown(url: str, attempts: int = 3) -> str:
             await asyncio.sleep(2 ** i)
     return ""  # unreachable
 
+
+# Per-domain stagger so we don't hammer one host.
+# Module-global is intentional: Streamlit single-process app shares one event loop.
 _domain_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
 async def fetch_markdown_polite(url: str) -> str:
-    host = urlparse(url).netloc
+    host = urlparse(url).netloc.lower()  # case-fold so Arxiv.org and arxiv.org share one lock
     async with _domain_locks[host]:
         return await fetch_markdown(url)
 ```
@@ -615,11 +655,11 @@ async def fetch_markdown_polite(url: str) -> str:
 - [ ] **Step 2: Resolve UNVERIFIED tags**
 
 ```bash
-python -c "from firecrawl import FirecrawlApp; help(FirecrawlApp.scrape_url)"
+python -c "from firecrawl import Firecrawl; help(Firecrawl.scrape)"
 python -c "from tavily import TavilyClient; help(TavilyClient.search)"
 ```
 
-If signatures differ (`formats=` direct kwarg vs `params={"formats": ...}`, `query=` vs positional), update the code and the spec §8 in the same commit.
+Note: firecrawl-py 4.x uses `Firecrawl(...).scrape(url, formats=[...])` and returns a Pydantic `Document` (markdown on `.markdown`). The legacy `FirecrawlApp` alias exists but exposes no `scrape_url`/`scrape` on this version. If signatures differ from what's coded above, update the code and spec §8 in the same commit.
 
 - [ ] **Step 3: Write smoke test**
 
@@ -675,17 +715,18 @@ No standalone test — helpers are exercised by the integration smoke test in T1
 import asyncio
 from google import genai
 from google.genai import types
-from google.api_core import exceptions as gx
+from google.genai import errors as gx
 from .settings import GEMINI_API_KEY
 
 _g_client = genai.Client(api_key=GEMINI_API_KEY)
 
-_RETRY_EXC = (
-    gx.ResourceExhausted,        # 429
-    gx.ServiceUnavailable,       # 503
-    gx.InternalServerError,      # 500
-    gx.DeadlineExceeded,         # 504
-)
+# google-genai 1.x exposes ClientError (4xx) and ServerError (5xx) under
+# google.genai.errors instead of google.api_core.exceptions. Transient codes
+# we want to retry on: 429 (ResourceExhausted), 500 (Internal),
+# 503 (Unavailable), 504 (DeadlineExceeded). We catch the broad classes and
+# filter by .code so non-transient 4xx/5xx propagate immediately.
+_RETRY_CODES = {429, 500, 503, 504}
+_RETRY_EXC = (gx.ClientError, gx.ServerError, asyncio.TimeoutError)
 
 async def _gen(model: str, contents, **cfg) -> object:
     """generate_content with backoff on transient errors."""
@@ -695,9 +736,14 @@ async def _gen(model: str, contents, **cfg) -> object:
                 model=model, contents=contents,
                 config=types.GenerateContentConfig(**cfg),
             )
-        except _RETRY_EXC:
+        except (gx.ClientError, gx.ServerError) as e:
+            if getattr(e, "code", None) not in _RETRY_CODES or i == 3:
+                raise
+            await asyncio.sleep(2 ** i + 1)
+        except asyncio.TimeoutError:
             if i == 3: raise
             await asyncio.sleep(2 ** i + 1)
+    raise RuntimeError("unreachable: _gen exhausted retries without raising")
 
 def _parsed_or_raise(resp, schema_name: str):
     """response.parsed is None on parse failure even with response_schema."""
@@ -723,7 +769,7 @@ from research_agent.schemas import Plan
 from google.genai import types
 
 async def go():
-    r = await _gen('gemini-2.5-pro', 'Decompose: what is mamba?',
+    r = await _gen('gemini-2.5-flash', 'Decompose: what is mamba?',
                    response_mime_type='application/json',
                    response_schema=Plan,
                    thinking_config=types.ThinkingConfig(thinking_budget=512))
@@ -846,7 +892,7 @@ Append node functions:
 ```python
 async def plan_node(state: ResearchState) -> dict:
     resp = await _gen(
-        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         f"Decompose into 3-5 search-engine queries:\n{state['question']}",
         response_mime_type="application/json",
         response_schema=Plan,
@@ -861,33 +907,48 @@ async def search_node(state: ResearchState) -> dict:
     return {"candidate_urls": await search_and_rank(state["plan"], k=8)}
 
 async def ingest_one(state: dict) -> dict:
+    """Per-URL: fetch -> salience -> (maybe) write to Graphiti. Reducer merges fan-in.
+
+    Any per-URL failure (Firecrawl 403, Gemini 503/exhausted retries, Graphiti
+    extraction error) must NOT abort the whole fan-out: swallow + record a skip
+    so the rest of the URLs still flow through.
+    """
     url = state["url"]
-    md = await fetch_markdown_polite(url)
-    topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
-    verdict_resp = await _gen(
-        "gemini-2.5-pro",
-        f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
-        response_mime_type="application/json",
-        response_schema=SalienceVerdict,
-        thinking_config=types.ThinkingConfig(thinking_budget=256),
-        system_instruction=(
-            "Score relevance 0-1 to the research focus AND the long-term topics. "
-            "Extract novel atomic claims as short factual sentences."
-        ),
-    )
-    verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
-    if verdict.score < SALIENCE_CUTOFF:
-        return {"documents": [{"url": url, "skipped": True, "score": verdict.score}]}
-    g = await get_graphiti()
-    ep_result = await g.add_episode(
-        name=url, episode_body=md, source_description=f"web:{url}",
-        reference_time=datetime.now(timezone.utc),
-    )
-    ep_uuid = ep_result.episode.uuid
-    return {
-        "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
-        "salient_episode_ids": [ep_uuid],
-    }
+    try:
+        md = await fetch_markdown_polite(url)
+        if not md:
+            return {"documents": [{"url": url, "skipped": True, "error": "empty markdown"}]}
+        topics_str = ", ".join(TOPICS) if TOPICS else "(no topics configured)"
+        verdict_resp = await _gen(
+            "gemini-2.5-flash",
+            f"Research focus: {state['question']}\nLong-term topics: {topics_str}\n\nDocument:\n{md[:20000]}",
+            response_mime_type="application/json",
+            response_schema=SalienceVerdict,
+            thinking_config=types.ThinkingConfig(thinking_budget=256),
+            system_instruction=(
+                "Score relevance 0-1 to the research focus AND the long-term topics. "
+                "Extract novel atomic claims as short factual sentences."
+            ),
+        )
+        verdict = _parsed_or_raise(verdict_resp, "SalienceVerdict")
+        if verdict.score < SALIENCE_CUTOFF:
+            return {"documents": [{"url": url, "skipped": True,
+                                    "score": verdict.score, "reason": verdict.reason}]}
+        g = await get_graphiti()
+        ep_result = await g.add_episode(
+            name=url,
+            episode_body=md,
+            source_description=f"web:{url}",
+            reference_time=datetime.now(timezone.utc),
+        )
+        ep_uuid = ep_result.episode.uuid
+        return {
+            "documents": [{"url": url, "episode_uuid": ep_uuid, "score": verdict.score}],
+            "salient_episode_ids": [ep_uuid],
+        }
+    except Exception as e:
+        return {"documents": [{"url": url, "skipped": True,
+                                "error": f"{type(e).__name__}: {str(e)[:200]}"}]}
 
 async def retrieve_node(state: ResearchState) -> dict:
     g = await get_graphiti()
@@ -897,7 +958,7 @@ async def retrieve_node(state: ResearchState) -> dict:
 
 async def answer_node(state: ResearchState) -> dict:
     resp = await _gen(
-        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         f"Question: {state['question']}\n\nContext (cite by [uuid]):\n{state['context']}",
         response_mime_type="application/json",
         response_schema=Answer,
@@ -1174,6 +1235,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from google.genai import types
 from pydantic import BaseModel
+from graphiti_core.nodes import EpisodicNode
 from .state import ReflectState
 from .graphiti_setup import get_graphiti
 from .nodes import _gen, _parsed_or_raise
@@ -1184,19 +1246,37 @@ class Synthesis(BaseModel):
 
 async def gather_recent(s: ReflectState) -> dict:
     g = await get_graphiti()
-    eps = await g.get_episodes(after=s["since_iso"])
-    return {"episode_uuids": [e.uuid for e in eps]}
+    # graphiti-core 0.29.0 has no `get_episodes(after=...)`. Use retrieve_episodes
+    # with reference_time=now to grab the most-recent window, then filter by
+    # valid_at >= since_iso Python-side. Kuzu returns naive datetimes for valid_at,
+    # so compare naive-to-naive.
+    since_dt = datetime.fromisoformat(s["since_iso"])
+    if since_dt.tzinfo is not None:
+        since_dt = since_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    eps = await g.retrieve_episodes(
+        reference_time=datetime.now(timezone.utc),
+        last_n=1000,
+    )
+    def _as_naive(dt):
+        return dt.astimezone(timezone.utc).replace(tzinfo=None) if dt.tzinfo else dt
+    return {"episode_uuids": [e.uuid for e in eps if _as_naive(e.valid_at) >= since_dt]}
 
 async def synthesize(s: ReflectState) -> dict:
     g = await get_graphiti()
-    eps = [await g.get_episode_by_uuid(u) for u in s["episode_uuids"]]
-    body = "\n---\n".join(e.content for e in eps)
+    if not s["episode_uuids"]:
+        return {"patterns": []}
+    # graphiti-core 0.29.0 has no `get_episode_by_uuid`. Use the EpisodicNode
+    # classmethod `get_by_uuids(driver, uuids)` for batched fetch.
+    eps = await EpisodicNode.get_by_uuids(g.driver, s["episode_uuids"])
+    body = "\n---\n".join(getattr(e, "content", "") for e in eps)
+    if not body.strip():
+        return {"patterns": []}
     resp = await _gen(
-        "gemini-2.5-pro",
+        "gemini-2.5-flash",
         f"Find non-obvious patterns connecting these episodes:\n{body[:80000]}",
         response_mime_type="application/json",
         response_schema=Synthesis,
-        thinking_config=types.ThinkingConfig(thinking_budget=8192),
+        thinking_config=types.ThinkingConfig(thinking_budget=4096),
     )
     return {"patterns": _parsed_or_raise(resp, "Synthesis").patterns}
 
@@ -1204,12 +1284,16 @@ async def write_back(s: ReflectState) -> dict:
     g = await get_graphiti()
     uuids = []
     for p in s["patterns"]:
-        result = await g.add_episode(
-            name=f"reflection:{date.today().isoformat()}",
-            episode_body=p, source_description="reflection",
-            reference_time=datetime.now(timezone.utc),
-        )
-        uuids.append(result.episode.uuid)
+        try:
+            ep_result = await g.add_episode(
+                name=f"reflection:{date.today().isoformat()}",
+                episode_body=p,
+                source_description="reflection",
+                reference_time=datetime.now(timezone.utc),
+            )
+            uuids.append(ep_result.episode.uuid)
+        except Exception as e:
+            print(f"  skip pattern (add_episode failed): {type(e).__name__}: {str(e)[:120]}")
     return {"new_synthesis_uuids": uuids}
 
 def _build_reflect() -> StateGraph:
@@ -1244,11 +1328,11 @@ if __name__ == "__main__":
 - [ ] **Step 2: Resolve UNVERIFIED tags**
 
 ```bash
-python -c "from graphiti_core import Graphiti; help(Graphiti.get_episodes)"
-python -c "from graphiti_core import Graphiti; print([m for m in dir(Graphiti) if 'episode' in m.lower()])"
+python -c "from graphiti_core import Graphiti; help(Graphiti.retrieve_episodes)"
+python -c "from graphiti_core.nodes import EpisodicNode; help(EpisodicNode.get_by_uuids)"
 ```
 
-If `get_episodes(after=...)` does not exist or `get_episode_by_uuid` is named differently (e.g. `get_node`, `retrieve_episode`), update the file and the spec §11 + §14 Group B in the same commit.
+Note: graphiti-core 0.29.0 has neither `get_episodes(after=...)` nor `get_episode_by_uuid`. Use `g.retrieve_episodes(reference_time=now, last_n=N)` then Python-side filter on `valid_at`, and `EpisodicNode.get_by_uuids(g.driver, uuids)` for batched fetch. If signatures differ from what's coded above, update the file and the spec §11 + §14 Group B in the same commit.
 
 - [ ] **Step 3: Verify CLI invokes**
 
@@ -1359,7 +1443,7 @@ from .eval_dataset import DATASET
 
 pytestmark = pytest.mark.eval
 
-JUDGE = GeminiModel(model="gemini-2.5-pro", api_key=os.environ["GEMINI_API_KEY"])
+JUDGE = GeminiModel(model="gemini-2.5-flash", api_key=os.environ["GEMINI_API_KEY"])
 
 CITATION_CORRECTNESS = GEval(
     name="CitationCorrectness", model=JUDGE, threshold=0.8,
